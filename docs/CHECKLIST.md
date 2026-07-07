@@ -28,9 +28,11 @@ Legend: `[x]` done · `[~]` partial · `[ ]` not started.
 
 ## To Do
 
+### Recipe engine (A1 + A2)
+- [x] **A1. Recipe serialization**: ProcessGraph ↔ versioned JSON via kotlinx.serialization DTOs (wire format decoupled from engine types), schemaVersion + forward-only migration chain, pinned v1 fixture as field-name contract, same-major forward compat (unknown fields ignored), newer-schema rejection
+- [x] **A2. `.filmrecipe` container**: ZIP with manifest.json (semver) + graph.json + preview + sha256 checksums.json; deterministic bytes (same recipe → same file); hardened reader — entry-count/per-entry/total size limits, path-traversal rejection, tamper detection, future-major rejection
+
 ### Phase A — engine depth (pure Kotlin/GL, verifiable on this machine)
-- [ ] **A1. Recipe serialization**: ProcessGraph ↔ JSON via kotlinx.serialization, embedded schema version, round-trip property tests
-- [ ] **A2. `.filmrecipe` container** (`core/recipe-engine`): ZIP + manifest.json + preview + checksums; forward-only migration chain with historical fixtures; malicious-container tests (zip bomb, path traversal)
 - [ ] **A3. Spatial nodes** on both backends: separable Gaussian → bloom (threshold + blur + screen), halation (red-weighted, pre-tonemap in film subgraph), procedural grain — includes y-flip handling and kernel-radius metadata on descriptors
 - [ ] **A4. Pass fusion (D2)**: compile-time fusion of pointwise runs into a baked 3D LUT pass; parity + banding tests; perf comparison logged
 - [ ] **A5. Filmic tone map**: parametric spline replacing the contrast placeholder; highlight reconstruction + shadow lift nodes
