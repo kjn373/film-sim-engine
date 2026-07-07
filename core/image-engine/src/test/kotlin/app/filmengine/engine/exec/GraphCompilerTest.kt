@@ -97,6 +97,18 @@ class GraphCompilerTest {
     }
 
     @Test
+    fun `rejects unknown option keys`() {
+        assertFailsWith<GraphValidationException> {
+            compiler.compile(
+                ProcessGraph(
+                    listOf(NodeInstance("e", "exposure", options = mapOf("nope" to "x"))),
+                    emptyList(), "e",
+                )
+            )
+        }
+    }
+
+    @Test
     fun `rejects cycles`() {
         val graph = ProcessGraph(
             nodes = listOf(node("a", "exposure"), node("b", "saturation")),

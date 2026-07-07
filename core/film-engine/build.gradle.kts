@@ -1,4 +1,3 @@
 dependencies {
     api(project(":core:image-engine"))
-    implementation(project(":core:film-engine"))
 }

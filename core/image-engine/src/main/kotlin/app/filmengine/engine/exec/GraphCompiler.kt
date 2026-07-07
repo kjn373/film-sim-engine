@@ -11,6 +11,7 @@ data class Step(
     val nodeId: String,
     val type: String,
     val params: Map<String, Float>,
+    val options: Map<String, String> = emptyMap(),
 )
 
 data class ExecutionPlan(
@@ -70,7 +71,12 @@ class GraphCompiler(private val registry: NodeRegistry = NodeRegistry.builtin) {
                 )
             }
             state = desc.output
-            steps += Step(node.id, node.type, resolveParams(node.params, desc))
+            for (key in node.options.keys) {
+                if (key !in desc.optionKeys) {
+                    throw GraphValidationException("Unknown option '$key' for node type ${desc.type}")
+                }
+            }
+            steps += Step(node.id, node.type, resolveParams(node.params, desc), node.options)
         }
         return ExecutionPlan(steps, state)
     }

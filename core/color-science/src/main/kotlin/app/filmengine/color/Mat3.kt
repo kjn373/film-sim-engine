@@ -28,6 +28,14 @@ class Mat3(val m: FloatArray) {
         m[6] * x + m[7] * y + m[8] * z,
     )
 
+    /** In-place transform of the first three elements of [v] — allocation-free for pixel loops. */
+    fun transform(v: FloatArray) {
+        val x = v[0]; val y = v[1]; val z = v[2]
+        v[0] = m[0] * x + m[1] * y + m[2] * z
+        v[1] = m[3] * x + m[4] * y + m[5] * z
+        v[2] = m[6] * x + m[7] * y + m[8] * z
+    }
+
     fun inverse(): Mat3 {
         val a = m[0]; val b = m[1]; val c = m[2]
         val d = m[3]; val e = m[4]; val f = m[5]

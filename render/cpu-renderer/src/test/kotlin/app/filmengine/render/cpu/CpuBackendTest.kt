@@ -76,6 +76,19 @@ class CpuBackendTest {
     }
 
     @Test
+    fun `render never aliases the source buffer, even with an all-disabled plan`() {
+        val src = testCard()
+        val plan = compiler.compile(
+            ProcessGraph(
+                listOf(NodeInstance("e", "exposure", enabled = false)), emptyList(), "e"
+            )
+        )
+        val out = backend.render(plan, src)
+        out.data[0] = 99f
+        assertTrue(src.data[0] == 0.18f, "mutating the output corrupted the source")
+    }
+
+    @Test
     fun `saturation zero collapses to luma grey`() {
         val graph = ProcessGraph(
             listOf(NodeInstance("s", "saturation", mapOf("amount" to 0f))), emptyList(), "s"

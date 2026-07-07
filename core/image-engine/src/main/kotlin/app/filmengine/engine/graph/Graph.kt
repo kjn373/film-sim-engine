@@ -19,6 +19,8 @@ data class NodeDescriptor(
     val params: List<ParamSpec>,
     val input: ColorState,
     val output: ColorState,
+    /** Non-numeric option keys this type accepts (e.g. "stock" for film_sim). */
+    val optionKeys: List<String> = emptyList(),
 )
 
 /** One node in a user's graph: a reference to a type plus parameter values. */
@@ -27,6 +29,7 @@ data class NodeInstance(
     val type: String,
     val params: Map<String, Float> = emptyMap(),
     val enabled: Boolean = true,
+    val options: Map<String, String> = emptyMap(),
 )
 
 data class Edge(val from: String, val to: String)
