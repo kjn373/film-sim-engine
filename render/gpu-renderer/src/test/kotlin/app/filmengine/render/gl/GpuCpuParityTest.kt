@@ -79,6 +79,7 @@ class GpuCpuParityTest {
             "color_matrix"
         )
         assertParity(single("tone_curve", mapOf("contrast" to 1.4f)), "tone_curve")
+        assertParity(single("tone_map", mapOf("exposure_bias" to 0.5f)), "tone_map")
         assertParity(single("saturation", mapOf("amount" to 1.6f)), "saturation")
         assertParity(single("srgb_output"), "srgb_output")
     }

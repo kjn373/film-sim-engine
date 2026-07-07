@@ -98,6 +98,29 @@ class CpuBackendTest {
     }
 
     @Test
+    fun `tone map is monotonic, anchored at zero and bounded`() {
+        val values = floatArrayOf(0f, 0.01f, 0.1f, 0.18f, 0.5f, 1f, 2f, 4f, 8f, 20f)
+        val src = ImageBuffer(values.size, 1, FloatArray(values.size * 4) { i ->
+            if (i % 4 == 3) 1f else values[i / 4]
+        })
+        val out = backend.render(
+            compiler.compile(
+                ProcessGraph(listOf(NodeInstance("t", "tone_map")), emptyList(), "t")
+            ),
+            src,
+        )
+        var prev = -1f
+        for (x in values.indices) {
+            val v = out.pixel(x, 0)[0]
+            assertTrue(v >= prev, "not monotonic at ${values[x]}: $v < $prev")
+            assertTrue(v in 0f..1f, "out of bounds at ${values[x]}: $v")
+            prev = v
+        }
+        assertTrue(out.pixel(0, 0)[0] == 0f, "zero must map to zero")
+        assertTrue(out.pixel(values.size - 1, 0)[0] > 0.95f, "highlights must approach white")
+    }
+
+    @Test
     fun `output transform maps working-space grey to srgb-encoded grey`() {
         // Grey is gamut-invariant, so rec2020 0.18 grey must encode to oetf(0.18).
         val graph = ProcessGraph(

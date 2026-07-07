@@ -109,6 +109,20 @@ object GlKernels {
         )
     ) { p, s -> glUniform1f(loc(p, "contrast"), s.params.getValue("contrast")) }
 
+    private val toneMap = GlKernel(
+        frag(
+            """
+            uniform float gain;
+            void main() {
+                vec4 c = texture(src, uv);
+                vec3 x = max(c.rgb, vec3(0.0)) * gain;
+                vec3 o = (x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14);
+                fragColor = vec4(clamp(o, 0.0, 1.0), c.a);
+            }
+            """
+        )
+    ) { p, s -> glUniform1f(loc(p, "gain"), 2f.pow(s.params.getValue("exposure_bias"))) }
+
     private val saturation = GlKernel(
         frag(
             """
@@ -305,6 +319,7 @@ object GlKernels {
         "white_balance" to whiteBalance,
         "color_matrix" to colorMatrix,
         "tone_curve" to toneCurve,
+        "tone_map" to toneMap,
         "saturation" to saturation,
         "film_sim" to filmSim,
         "srgb_output" to srgbOutput,

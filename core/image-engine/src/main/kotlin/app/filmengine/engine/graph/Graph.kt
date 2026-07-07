@@ -91,6 +91,15 @@ object BuiltinNodes {
         "srgb_output", emptyList(), S, ColorState.DISPLAY_SRGB
     )
 
+    /**
+     * Neutral filmic display transform (ACES-fitted rational curve) — the
+     * "look neutral" default for the non-film path. Film stocks tone-map
+     * through their own characteristic curve instead.
+     */
+    val TONE_MAP = NodeDescriptor(
+        "tone_map", listOf(ParamSpec("exposure_bias", 0f, -4f, 4f)), S, S
+    )
+
     val GAUSSIAN_BLUR = NodeDescriptor(
         "gaussian_blur", listOf(ParamSpec("sigma", 2f, 0.1f, 24f)), S, S
     )
@@ -106,7 +115,7 @@ object BuiltinNodes {
     )
 
     val all = listOf(
-        EXPOSURE, WHITE_BALANCE, COLOR_MATRIX, TONE_CURVE, SATURATION, SRGB_OUTPUT,
+        EXPOSURE, WHITE_BALANCE, COLOR_MATRIX, TONE_CURVE, TONE_MAP, SATURATION, SRGB_OUTPUT,
         GAUSSIAN_BLUR, BLOOM,
     )
 }

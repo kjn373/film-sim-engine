@@ -76,6 +76,18 @@ object BuiltinCpuKernels {
         }
     }
 
+    /** ACES-fitted filmic curve (Narkowicz): monotonic, 0 -> 0, bounded to [0,1]. */
+    val toneMap = CpuKernel { src, step ->
+        val gain = 2f.pow(step.params.getValue("exposure_bias"))
+        pointwise(src) { px ->
+            for (i in 0..2) {
+                val x = kotlin.math.max(px[i], 0f) * gain
+                px[i] = ((x * (2.51f * x + 0.03f)) / (x * (2.43f * x + 0.59f) + 0.14f))
+                    .coerceIn(0f, 1f)
+            }
+        }
+    }
+
     val saturation = CpuKernel { src, step ->
         val amt = step.params.getValue("amount")
         pointwise(src) { px ->
@@ -97,6 +109,7 @@ object BuiltinCpuKernels {
         "white_balance" to whiteBalance,
         "color_matrix" to colorMatrix,
         "tone_curve" to toneCurve,
+        "tone_map" to toneMap,
         "saturation" to saturation,
         "srgb_output" to srgbOutput,
         "gaussian_blur" to SpatialCpuKernels.gaussianBlur,
