@@ -35,5 +35,9 @@ object FilmCpuKernels {
         }
     }
 
-    val all: Map<String, CpuKernel> = mapOf("film_sim" to filmSim)
+    val all: Map<String, CpuKernel> = mapOf(
+        "film_sim" to filmSim,
+        "halation" to SpatialCpuKernels.halation,
+        "grain" to SpatialCpuKernels.grain,
+    )
 }

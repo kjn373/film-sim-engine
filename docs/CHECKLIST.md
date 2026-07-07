@@ -32,8 +32,16 @@ Legend: `[x]` done · `[~]` partial · `[ ]` not started.
 - [x] **A1. Recipe serialization**: ProcessGraph ↔ versioned JSON via kotlinx.serialization DTOs (wire format decoupled from engine types), schemaVersion + forward-only migration chain, pinned v1 fixture as field-name contract, same-major forward compat (unknown fields ignored), newer-schema rejection
 - [x] **A2. `.filmrecipe` container**: ZIP with manifest.json (semver) + graph.json + preview + sha256 checksums.json; deterministic bytes (same recipe → same file); hardened reader — entry-count/per-entry/total size limits, path-traversal rejection, tamper detection, future-major rejection
 
+### Spatial nodes (A3)
+- [x] **A3. Spatial nodes** on both backends:
+  - shared `Gaussian.weights()` in image-engine — both backends consume identical floats (this is what makes spatial parity hold)
+  - `gaussian_blur` (separable H+V, clamp-to-edge), `bloom` (bright-pass → blur → additive composite), `halation` (red-orange tinted glow, film-engine node), `grain` (integer-hash noise, bit-identical Kotlin Int ↔ GLSL uint, midtone-peaked luminance response, seeded)
+  - GPU: multi-pass `GlKernel` (pass list), three-target scheduling so a step's input survives for `orig` composite samplers, backend-provided `texelSize`
+  - orientation settled: texel row 0 = image row 0 on upload/readback and `gl_FragCoord` — no flip anywhere in the engine (display flip is the platform layer's job)
+  - parity extended: 4 spatial nodes + full creative chain (exposure → film → halation → bloom → grain → sRGB), all within 2e-3 on GPU
+  - deferred: kernel-radius metadata on descriptors (needed by A7 tiling, added there)
+
 ### Phase A — engine depth (pure Kotlin/GL, verifiable on this machine)
-- [ ] **A3. Spatial nodes** on both backends: separable Gaussian → bloom (threshold + blur + screen), halation (red-weighted, pre-tonemap in film subgraph), procedural grain — includes y-flip handling and kernel-radius metadata on descriptors
 - [ ] **A4. Pass fusion (D2)**: compile-time fusion of pointwise runs into a baked 3D LUT pass; parity + banding tests; perf comparison logged
 - [ ] **A5. Filmic tone map**: parametric spline replacing the contrast placeholder; highlight reconstruction + shadow lift nodes
 - [ ] **A6. Stock catalog growth**: 6+ additional stocks; `tooling/film-lab` fitting skeleton (curve fit from datasheet/scan pairs)

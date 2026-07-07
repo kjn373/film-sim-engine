@@ -26,10 +26,12 @@ class GlRenderBackend(
 
         val w = source.width
         val h = source.height
-        val texs = IntArray(2) { makeTexture(w, h) }
-        val fbos = IntArray(2) { glGenFramebuffers() }
+        // Three targets: a step's input must stay alive for composite passes
+        // (`orig` sampler) while the step's internal passes ping-pong the other two.
+        val texs = IntArray(3) { makeTexture(w, h) }
+        val fbos = IntArray(3) { glGenFramebuffers() }
         try {
-            for (i in 0..1) {
+            for (i in texs.indices) {
                 glBindFramebuffer(GL_FRAMEBUFFER, fbos[i])
                 glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texs[i], 0)
                 check(glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE) {
@@ -37,9 +39,9 @@ class GlRenderBackend(
                 }
             }
 
-            // ponytail: no y-flip anywhere — all current passes are pointwise, so
-            // orientation cancels between upload and readback. Revisit with the
-            // first spatial node (bloom/blur).
+            // Texel row 0 = image row 0 on upload AND readback, and gl_FragCoord.y
+            // indexes the same rows — CPU and GPU agree on orientation with no flip.
+            // (Display orientation is the Android surface's problem, not the engine's.)
             upload(texs[0], source)
 
             glViewport(0, 0, w, h)
@@ -48,16 +50,33 @@ class GlRenderBackend(
             for (step in plan.steps) {
                 val kernel = kernels[step.type]
                     ?: error("No GL kernel registered for node type '${step.type}'")
-                val program = programs.getOrPut(step.type) { buildProgram(kernel.fragmentSrc) }
-                val dst = 1 - cur
-                glBindFramebuffer(GL_FRAMEBUFFER, fbos[dst])
-                glUseProgram(program)
-                glActiveTexture(GL_TEXTURE0)
-                glBindTexture(GL_TEXTURE_2D, texs[cur])
-                glUniform1i(glGetUniformLocation(program, "src"), 0)
-                kernel.bind(program, step)
-                glDrawArrays(GL_TRIANGLES, 0, 3)
-                cur = dst
+                val stepInput = cur
+                var passInput = cur
+                for ((pi, pass) in kernel.passes.withIndex()) {
+                    val program = programs.getOrPut("${step.type}#$pi") { buildProgram(pass.fragmentSrc) }
+                    val dst = (0..2).first { it != stepInput && it != passInput }
+                    glBindFramebuffer(GL_FRAMEBUFFER, fbos[dst])
+                    glUseProgram(program)
+
+                    glActiveTexture(GL_TEXTURE0)
+                    glBindTexture(GL_TEXTURE_2D, texs[passInput])
+                    glUniform1i(glGetUniformLocation(program, "src"), 0)
+
+                    val origLoc = glGetUniformLocation(program, "orig")
+                    if (origLoc >= 0) {
+                        glActiveTexture(GL_TEXTURE1)
+                        glBindTexture(GL_TEXTURE_2D, texs[stepInput])
+                        glUniform1i(origLoc, 1)
+                        glActiveTexture(GL_TEXTURE0)
+                    }
+                    val texelLoc = glGetUniformLocation(program, "texelSize")
+                    if (texelLoc >= 0) glUniform2f(texelLoc, 1f / w, 1f / h)
+
+                    pass.bind(program, step)
+                    glDrawArrays(GL_TRIANGLES, 0, 3)
+                    passInput = dst
+                }
+                cur = passInput
             }
 
             return readback(fbos[cur], w, h)

@@ -91,5 +91,22 @@ object BuiltinNodes {
         "srgb_output", emptyList(), S, ColorState.DISPLAY_SRGB
     )
 
-    val all = listOf(EXPOSURE, WHITE_BALANCE, COLOR_MATRIX, TONE_CURVE, SATURATION, SRGB_OUTPUT)
+    val GAUSSIAN_BLUR = NodeDescriptor(
+        "gaussian_blur", listOf(ParamSpec("sigma", 2f, 0.1f, 24f)), S, S
+    )
+    /** Additive bloom: bright pass above threshold, blurred, added back. */
+    val BLOOM = NodeDescriptor(
+        "bloom",
+        listOf(
+            ParamSpec("threshold", 1f, 0f, 8f),
+            ParamSpec("intensity", 0.5f, 0f, 4f),
+            ParamSpec("sigma", 4f, 0.5f, 24f),
+        ),
+        S, S
+    )
+
+    val all = listOf(
+        EXPOSURE, WHITE_BALANCE, COLOR_MATRIX, TONE_CURVE, SATURATION, SRGB_OUTPUT,
+        GAUSSIAN_BLUR, BLOOM,
+    )
 }

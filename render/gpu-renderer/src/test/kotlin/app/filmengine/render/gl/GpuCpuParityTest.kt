@@ -110,6 +110,42 @@ class GpuCpuParityTest {
         assertParity(graph, "full-chain")
     }
 
+    @Test
+    fun `every spatial node matches the CPU reference`() {
+        assumeTrue(GlContext.available, "no OpenGL context on this machine")
+        assertParity(single("gaussian_blur", mapOf("sigma" to 3f)), "gaussian_blur")
+        assertParity(
+            single("bloom", mapOf("threshold" to 0.8f, "intensity" to 0.7f, "sigma" to 4f)),
+            "bloom"
+        )
+        assertParity(
+            single("halation", mapOf("threshold" to 0.9f, "strength" to 1.2f, "sigma" to 5f)),
+            "halation"
+        )
+        assertParity(single("grain", mapOf("amount" to 0.6f, "seed" to 7f)), "grain")
+    }
+
+    @Test
+    fun `a full creative chain with spatial nodes matches the CPU reference`() {
+        assumeTrue(GlContext.available, "no OpenGL context on this machine")
+        val graph = ProcessGraph(
+            nodes = listOf(
+                NodeInstance("exp", "exposure", mapOf("stops" to 0.3f)),
+                NodeInstance("film", "film_sim", options = mapOf("stock" to "chroma-100")),
+                NodeInstance("hal", "halation", mapOf("threshold" to 0.8f, "strength" to 0.8f, "sigma" to 4f)),
+                NodeInstance("blm", "bloom", mapOf("threshold" to 0.7f, "intensity" to 0.4f, "sigma" to 3f)),
+                NodeInstance("grn", "grain", mapOf("amount" to 0.35f, "seed" to 3f)),
+                NodeInstance("out", "srgb_output"),
+            ),
+            edges = listOf(
+                Edge("exp", "film"), Edge("film", "hal"), Edge("hal", "blm"),
+                Edge("blm", "grn"), Edge("grn", "out"),
+            ),
+            outputNodeId = "out",
+        )
+        assertParity(graph, "creative-chain")
+    }
+
     private companion object {
         // Absolute, on data spanning ~0..3 linear: generous enough for driver
         // transcendental variance, tight enough to catch any real math drift.

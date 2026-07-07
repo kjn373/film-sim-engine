@@ -2,9 +2,12 @@ package app.filmengine.render.gl
 
 import app.filmengine.color.ColorSpaces
 import app.filmengine.engine.exec.Step
+import app.filmengine.engine.node.Gaussian
 import app.filmengine.film.BuiltinStocks
 import org.lwjgl.opengl.GL33.glGetUniformLocation
 import org.lwjgl.opengl.GL33.glUniform1f
+import org.lwjgl.opengl.GL33.glUniform1fv
+import org.lwjgl.opengl.GL33.glUniform1i
 import org.lwjgl.opengl.GL33.glUniformMatrix3fv
 import kotlin.math.pow
 
@@ -14,9 +17,19 @@ import kotlin.math.pow
  * GLSL kept to the GLES 3.0-compatible subset; only the #version line differs
  * on Android.
  */
-// ponytail: no pass fusion yet — every node is its own fullscreen pass. The
-// 3D-LUT fusion pass (ARCHITECTURE.md D2) replaces this when preview perf matters.
-class GlKernel(val fragmentSrc: String, val bind: (program: Int, step: Step) -> Unit)
+// ponytail: no pass fusion yet — every node is its own fullscreen pass (or passes).
+// The 3D-LUT fusion pass (ARCHITECTURE.md D2) replaces this when preview perf matters.
+class GlPass(val fragmentSrc: String, val bind: (program: Int, step: Step) -> Unit)
+
+/**
+ * A node's GPU implementation: one or more sequential fullscreen passes.
+ * Backend-provided uniforms every pass may declare: `src` (previous pass output),
+ * `orig` (the step's input, for composites), `texelSize` (1/w, 1/h).
+ */
+class GlKernel(val passes: List<GlPass>) {
+    constructor(fragmentSrc: String, bind: (program: Int, step: Step) -> Unit) :
+        this(listOf(GlPass(fragmentSrc, bind)))
+}
 
 object GlKernels {
 
@@ -181,6 +194,112 @@ object GlKernels {
         )
     ) { p, _ -> setMat3(p, "toSrgb", ColorSpaces.REC2020_TO_SRGB.m) }
 
+    // ── spatial passes ──────────────────────────────────────────────────────
+
+    private fun blurFrag(horizontal: Boolean) = frag(
+        """
+        uniform vec2 texelSize;
+        uniform float weights[${Gaussian.MAX_RADIUS + 1}];
+        uniform int radius;
+        void main() {
+            vec4 acc = vec4(0.0);
+            for (int i = -radius; i <= radius; i++) {
+                vec2 off = ${if (horizontal) "vec2(texelSize.x * float(i), 0.0)" else "vec2(0.0, texelSize.y * float(i))"};
+                acc += weights[abs(i)] * texture(src, uv + off);
+            }
+            fragColor = acc;
+        }
+        """
+    )
+
+    private val bindBlur: (Int, Step) -> Unit = { p, s ->
+        val w = Gaussian.weights(s.params.getValue("sigma"))
+        glUniform1fv(loc(p, "weights"), w)
+        glUniform1i(loc(p, "radius"), w.size - 1)
+    }
+
+    private val brightPassFrag = frag(
+        """
+        uniform float threshold;
+        void main() {
+            vec4 c = texture(src, uv);
+            fragColor = vec4(max(c.rgb - vec3(threshold), vec3(0.0)), c.a);
+        }
+        """
+    )
+
+    private val bindThreshold: (Int, Step) -> Unit = { p, s ->
+        glUniform1f(loc(p, "threshold"), s.params.getValue("threshold"))
+    }
+
+    private val gaussianBlur = GlKernel(
+        listOf(GlPass(blurFrag(true), bindBlur), GlPass(blurFrag(false), bindBlur))
+    )
+
+    private val bloom = GlKernel(
+        listOf(
+            GlPass(brightPassFrag, bindThreshold),
+            GlPass(blurFrag(true), bindBlur),
+            GlPass(blurFrag(false), bindBlur),
+            GlPass(
+                frag(
+                    """
+                    uniform sampler2D orig;
+                    uniform float intensity;
+                    void main() {
+                        vec4 o = texture(orig, uv);
+                        fragColor = vec4(o.rgb + texture(src, uv).rgb * intensity, o.a);
+                    }
+                    """
+                )
+            ) { p, s -> glUniform1f(loc(p, "intensity"), s.params.getValue("intensity")) },
+        )
+    )
+
+    private val halation = GlKernel(
+        listOf(
+            GlPass(brightPassFrag, bindThreshold),
+            GlPass(blurFrag(true), bindBlur),
+            GlPass(blurFrag(false), bindBlur),
+            GlPass(
+                frag(
+                    """
+                    uniform sampler2D orig;
+                    uniform float strength;
+                    void main() {
+                        vec4 o = texture(orig, uv);
+                        fragColor = vec4(o.rgb + texture(src, uv).rgb * vec3(1.0, 0.35, 0.10) * strength, o.a);
+                    }
+                    """
+                )
+            ) { p, s -> glUniform1f(loc(p, "strength"), s.params.getValue("strength")) },
+        )
+    )
+
+    private val grain = GlKernel(
+        frag(
+            """
+            uniform float amount;
+            uniform float seed;
+            void main() {
+                vec4 c = texture(src, uv);
+                uvec2 pix = uvec2(ivec2(gl_FragCoord.xy));
+                uint h = pix.x * 1664525u + pix.y * 1013904223u + uint(seed);
+                h ^= h >> 16u; h *= 0x45d9f3bu;
+                h ^= h >> 16u; h *= 0x45d9f3bu;
+                h ^= h >> 16u;
+                float n = float(h & 0xFFFFFFu) / 16777216.0;
+                float luma = clamp(dot(c.rgb, vec3(0.2627, 0.6780, 0.0593)), 0.0, 1.0);
+                float response = 2.0 * sqrt(luma * (1.0 - luma));
+                fragColor = vec4(c.rgb * (1.0 + amount * (n - 0.5) * response), c.a);
+            }
+            """
+        )
+    ) { p, s ->
+        glUniform1f(loc(p, "amount"), s.params.getValue("amount"))
+        glUniform1f(loc(p, "seed"), s.params.getValue("seed"))
+    }
+
     val all: Map<String, GlKernel> = mapOf(
         "exposure" to exposure,
         "white_balance" to whiteBalance,
@@ -189,5 +308,9 @@ object GlKernels {
         "saturation" to saturation,
         "film_sim" to filmSim,
         "srgb_output" to srgbOutput,
+        "gaussian_blur" to gaussianBlur,
+        "bloom" to bloom,
+        "halation" to halation,
+        "grain" to grain,
     )
 }

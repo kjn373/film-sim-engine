@@ -20,5 +20,30 @@ object FilmNodes {
         optionKeys = listOf("stock"),
     )
 
-    val all = listOf(FILM_SIM)
+    /** Red-orange glow around speculars — light bouncing off the film base. */
+    val HALATION = NodeDescriptor(
+        type = "halation",
+        params = listOf(
+            ParamSpec("threshold", 1f, 0f, 8f),
+            ParamSpec("strength", 0.6f, 0f, 4f),
+            ParamSpec("sigma", 6f, 0.5f, 24f),
+        ),
+        input = ColorState.SCENE_LINEAR,
+        output = ColorState.SCENE_LINEAR,
+    )
+
+    /** Procedural, luminance-coupled monochromatic grain (strongest in midtones). */
+    // ponytail: single-pixel noise — grain size/octaves and scanned tiles come with
+    // premium packs (ARCHITECTURE.md §6).
+    val GRAIN = NodeDescriptor(
+        type = "grain",
+        params = listOf(
+            ParamSpec("amount", 0.25f, 0f, 1f),
+            ParamSpec("seed", 0f, 0f, 65535f),
+        ),
+        input = ColorState.SCENE_LINEAR,
+        output = ColorState.SCENE_LINEAR,
+    )
+
+    val all = listOf(FILM_SIM, HALATION, GRAIN)
 }
