@@ -25,6 +25,7 @@ dependencies {
     api("androidx.camera:camera-core:$camerax")
     api("androidx.camera:camera-camera2:$camerax")
     api("androidx.camera:camera-lifecycle:$camerax")
+    api(project(":android:gles-renderer"))
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
     // AGP unit tests run on JUnit4

@@ -11,6 +11,9 @@ pluginManagement {
         mavenCentral()
     }
 }
+plugins {
+    id("org.gradle.toolchains.foojay-resolver-convention") version "0.10.0"
+}
 
 dependencyResolutionManagement {
     repositories {
@@ -32,3 +35,4 @@ include(":tooling:film-lab")
 include(":backend:backend-api")
 include(":android:camera-app")
 include(":android:camera-core")
+include(":android:gles-renderer")
