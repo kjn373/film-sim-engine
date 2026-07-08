@@ -68,9 +68,12 @@ Legend: `[x]` done · `[~]` partial · `[ ]` not started.
 - [ ] **B7. Device profile v1** for the reference device (black levels, dual-illuminant matrices, noise ladder) via `tooling/profile-calibrator`
 - [ ] **B8. Editor**: layer stack UI → graph compile, Room edit sessions + append-only version history, tiled export, HEIF
 
-### Phase C — backend & community
-- [ ] **C1. backend-api**: Ktor modular monolith, Postgres schema (ARCHITECTURE §13), Flyway migrations, Testcontainers suite
-- [ ] **C2. Auth**: JWT access + rotating refresh, Argon2id
+### Backend foundation (C1 + C2)
+- [x] **C1. backend-api**: Ktor 3 modular monolith (service boundaries = packages per D6), HikariCP + Flyway (V1: users, auth_credentials, refresh_tokens, recipes, recipe_versions), problem-JSON error pages, JDBC off the event loop (`Db.tx` on Dispatchers.IO), Testcontainers suite against real Postgres 16
+- [x] **C2. Auth**: Argon2id hashing (timing-equalized login), JWT access (15 min, HS256) + opaque rotating refresh tokens (sha256-stored, single-use via atomic `DELETE … RETURNING`), input validation at the boundary, full-flow integration tests (register → me → 409/401 paths → refresh rotation + reuse rejection)
+- [x] Local Testcontainers note: Docker Engine 29 dropped API < 1.44 — pinned `api.version=1.44` on the test task; `~/.testcontainers.properties` points at Docker Desktop's `dockerDesktopLinuxEngine` pipe
+
+### Phase C — backend & community (remaining)
 - [ ] **C3. Recipes API**: CRUD, versions, forks (lineage), presigned uploads, container validation worker
 - [ ] **C4. Community**: likes/ratings/comments/follows, feeds (Redis), cursor sync protocol
 - [ ] **C5. OTA device profiles** endpoint + client refresh job
@@ -84,7 +87,7 @@ Legend: `[x]` done · `[~]` partial · `[ ]` not started.
 - [ ] **D6. AI node tier**: NR, semantic masks, film matching (kernel type `ai` per descriptor)
 
 ### Standing engineering tasks (each phase)
-- [ ] CI: GitHub Actions — build + test on PR; parity suite headless story (GPU runner or skip-with-report)
+- [x] CI: GitHub Actions — build + test on push/PR (green on `main`); GPU parity tests self-skip headless with a reported count; gradlew executable bit fixed for Linux runners
 - [ ] Konsist architecture rules (no Android imports in `core/*`, dependency direction)
 - [ ] Benchmark harness (`tooling/benchmark`) once spatial nodes land
 - [ ] Golden-image corpus with perceptual diff once exports exist
