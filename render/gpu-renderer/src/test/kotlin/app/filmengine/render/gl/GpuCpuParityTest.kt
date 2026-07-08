@@ -127,6 +127,36 @@ class GpuCpuParityTest {
     }
 
     @Test
+    fun `a fused LUT plan matches the CPU fused reference`() {
+        assumeTrue(GlContext.available, "no OpenGL context on this machine")
+        val graph = ProcessGraph(
+            nodes = listOf(
+                NodeInstance("exp", "exposure", mapOf("stops" to 0.4f)),
+                NodeInstance("film", "film_sim", options = mapOf("stock" to "chroma-100")),
+                NodeInstance("sat", "saturation", mapOf("amount" to 1.2f)),
+                NodeInstance("out", "srgb_output"),
+            ),
+            edges = listOf(Edge("exp", "film"), Edge("film", "sat"), Edge("sat", "out")),
+            outputNodeId = "out",
+        )
+        val fused = app.filmengine.render.cpu.PlanFusion.fuse(
+            compiler.compile(graph),
+            NodeRegistry(BuiltinNodes.all + FilmNodes.all),
+            BuiltinCpuKernels.all + FilmCpuKernels.all,
+        )
+        val src = hdrTestImage()
+        val cpuOut = cpu.render(fused, src)
+        val gpuOut = gpu.render(fused, src)
+        var worst = 0f
+        for (i in cpuOut.data.indices) {
+            val d = abs(cpuOut.data[i] - gpuOut.data[i])
+            if (d > worst) worst = d
+        }
+        // Looser than pointwise parity: hardware trilinear filtering precision varies.
+        assertTrue(worst < 1.5e-2f, "fused plan CPU/GPU deviation $worst exceeds 1.5e-2")
+    }
+
+    @Test
     fun `a full creative chain with spatial nodes matches the CPU reference`() {
         assumeTrue(GlContext.available, "no OpenGL context on this machine")
         val graph = ProcessGraph(

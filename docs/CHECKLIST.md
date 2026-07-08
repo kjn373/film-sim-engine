@@ -44,8 +44,14 @@ Legend: `[x]` done · `[~]` partial · `[ ]` not started.
 ### Filmic tone map (A5, first half)
 - [x] **A5a. `tone_map` node**: ACES-fitted rational curve with exposure-bias param on both backends — monotonic, zero-anchored, bounded [0,1]; parity-tested. The neutral display transform for the non-film path (film stocks tone-map via their characteristic curve).
 
-### Phase A — engine depth (pure Kotlin/GL, verifiable on this machine)
-- [ ] **A4. Pass fusion (D2)**: compile-time fusion of pointwise runs into a baked 3D LUT pass (needs a log shaper for the unbounded scene-linear domain); parity + banding tests; perf comparison logged
+### Pass fusion (A4)
+- [x] **A4. Pass fusion (D2)**: `PlanFusion` collapses each maximal run of ≥2 fusable pointwise steps into one baked-3D-LUT step (33³ default)
+  - bake = render an N³ lattice through the actual CPU kernels — exact at lattice points by construction
+  - domain shaper `log2(x/black + 1)` — exact at 0 (true black preserved through fusion), log-dense shadows, +6-stop ceiling
+  - `fusable` flag on descriptors; `Step.inputState`; `BakedLut` payload; CPU trilinear kernel mirrors GLSL `sampler3D` (single-slot texture cache)
+  - **finding:** the sRGB output transform must NOT be fused — its hard gamut clamp is a slope kink the OETF amplifies ~13× near black (measured 0.09 error on saturated cyan). It stays an exact analytic pass; a fused chain is LUT + output = 2 passes total
+  - gates: fused-vs-unfused worst < 0.015 / mean < 0.003 on an HDR card; black exact; CPU↔GPU fused parity < 1.5e-2
+  - follow-up (Phase A backlog): gamut-compression node to replace the hard clamp — fixes hue skew on saturated colors AND makes the output transform fusable
 - [ ] **A5b. RAW develop nodes**: highlight reconstruction + shadow lift (meaningful once RAW/DNG input exists — Phase B)
 - [ ] **A6. Stock catalog growth**: 6+ additional stocks; `tooling/film-lab` fitting skeleton (curve fit from datasheet/scan pairs)
 - [ ] **A7. Tiled rendering**: 512px tiles + overlap = max kernel radius, for large exports on both backends

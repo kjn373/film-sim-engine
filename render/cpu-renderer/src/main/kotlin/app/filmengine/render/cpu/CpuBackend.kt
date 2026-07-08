@@ -114,5 +114,6 @@ object BuiltinCpuKernels {
         "srgb_output" to srgbOutput,
         "gaussian_blur" to SpatialCpuKernels.gaussianBlur,
         "bloom" to SpatialCpuKernels.bloom,
+        app.filmengine.engine.exec.BakedLut.TYPE to PlanFusion.cpuKernel,
     )
 }

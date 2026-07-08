@@ -1,14 +1,12 @@
 package app.filmengine.render.gl
 
 import app.filmengine.color.ColorSpaces
+import app.filmengine.engine.exec.BakedLut
 import app.filmengine.engine.exec.Step
 import app.filmengine.engine.node.Gaussian
 import app.filmengine.film.BuiltinStocks
-import org.lwjgl.opengl.GL33.glGetUniformLocation
-import org.lwjgl.opengl.GL33.glUniform1f
-import org.lwjgl.opengl.GL33.glUniform1fv
-import org.lwjgl.opengl.GL33.glUniform1i
-import org.lwjgl.opengl.GL33.glUniformMatrix3fv
+import org.lwjgl.BufferUtils
+import org.lwjgl.opengl.GL33.*
 import kotlin.math.pow
 
 /**
@@ -314,6 +312,57 @@ object GlKernels {
         glUniform1f(loc(p, "seed"), s.params.getValue("seed"))
     }
 
+    // ── baked LUT (pass fusion, D2) ─────────────────────────────────────────
+
+    /** Single-slot 3D-texture cache: re-uploads only when the LUT instance changes. */
+    private class LutSlot {
+        var tex = 0
+        var lut: BakedLut? = null
+    }
+
+    private val lutSlot = LutSlot()
+
+    private val bakedLut = GlKernel(
+        frag(
+            """
+            uniform sampler3D lut;
+            uniform float lutSize;
+            uniform float shaperBlack;
+            uniform float shaperWhite;
+            void main() {
+                vec4 c = texture(src, uv);
+                float k = log2(shaperWhite / shaperBlack + 1.0);
+                vec3 s = log2(clamp(c.rgb, 0.0, shaperWhite) / shaperBlack + 1.0) / k;
+                vec3 coord = (s * (lutSize - 1.0) + 0.5) / lutSize;
+                fragColor = vec4(texture(lut, coord).rgb, c.a);
+            }
+            """
+        )
+    ) { p, s ->
+        val lut = s.lut ?: error("baked_lut step '${s.nodeId}' has no LUT payload")
+        if (lutSlot.lut !== lut) {
+            if (lutSlot.tex != 0) glDeleteTextures(lutSlot.tex)
+            lutSlot.tex = glGenTextures()
+            glBindTexture(GL_TEXTURE_3D, lutSlot.tex)
+            glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+            glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+            glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
+            glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
+            glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE)
+            val buf = BufferUtils.createFloatBuffer(lut.data.size)
+            buf.put(lut.data).flip()
+            glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA32F, lut.size, lut.size, lut.size, 0, GL_RGBA, GL_FLOAT, buf)
+            lutSlot.lut = lut
+        }
+        glActiveTexture(GL_TEXTURE2)
+        glBindTexture(GL_TEXTURE_3D, lutSlot.tex)
+        glUniform1i(loc(p, "lut"), 2)
+        glActiveTexture(GL_TEXTURE0)
+        glUniform1f(loc(p, "lutSize"), s.params.getValue(BakedLut.KEY_SIZE))
+        glUniform1f(loc(p, "shaperBlack"), s.params.getValue(BakedLut.KEY_SHAPER_BLACK))
+        glUniform1f(loc(p, "shaperWhite"), s.params.getValue(BakedLut.KEY_SHAPER_WHITE))
+    }
+
     val all: Map<String, GlKernel> = mapOf(
         "exposure" to exposure,
         "white_balance" to whiteBalance,
@@ -327,5 +376,6 @@ object GlKernels {
         "bloom" to bloom,
         "halation" to halation,
         "grain" to grain,
+        BakedLut.TYPE to bakedLut,
     )
 }

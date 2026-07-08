@@ -21,6 +21,11 @@ data class NodeDescriptor(
     val output: ColorState,
     /** Non-numeric option keys this type accepts (e.g. "stock" for film_sim). */
     val optionKeys: List<String> = emptyList(),
+    /**
+     * True for pure per-pixel color transforms (no neighborhood, no position) —
+     * exactly the nodes PlanFusion may bake into a 3D LUT (ARCHITECTURE.md D2).
+     */
+    val fusable: Boolean = false,
 )
 
 /** One node in a user's graph: a reference to a type plus parameter values. */
@@ -64,12 +69,12 @@ object BuiltinNodes {
     private val S = ColorState.SCENE_LINEAR
 
     val EXPOSURE = NodeDescriptor(
-        "exposure", listOf(ParamSpec("stops", 0f, -8f, 8f)), S, S
+        "exposure", listOf(ParamSpec("stops", 0f, -8f, 8f)), S, S, fusable = true
     )
     val WHITE_BALANCE = NodeDescriptor(
         "white_balance",
         listOf(ParamSpec("r_gain", 1f, 0.2f, 5f), ParamSpec("b_gain", 1f, 0.2f, 5f)),
-        S, S
+        S, S, fusable = true
     )
     val COLOR_MATRIX = NodeDescriptor(
         "color_matrix",
@@ -77,16 +82,22 @@ object BuiltinNodes {
                "m10" to 0f, "m11" to 1f, "m12" to 0f,
                "m20" to 0f, "m21" to 0f, "m22" to 1f)
             .map { (k, d) -> ParamSpec(k, d, -4f, 4f) },
-        S, S
+        S, S, fusable = true
     )
     /** Slope through an 18% grey pivot — placeholder until the filmic spline (M2). */
     val TONE_CURVE = NodeDescriptor(
-        "tone_curve", listOf(ParamSpec("contrast", 1f, 0.2f, 3f)), S, S
+        "tone_curve", listOf(ParamSpec("contrast", 1f, 0.2f, 3f)), S, S, fusable = true
     )
     val SATURATION = NodeDescriptor(
-        "saturation", listOf(ParamSpec("amount", 1f, 0f, 3f)), S, S
+        "saturation", listOf(ParamSpec("amount", 1f, 0f, 3f)), S, S, fusable = true
     )
-    /** Working space (linear Rec.2020) -> encoded sRGB. Terminal transform. */
+    /**
+     * Working space (linear Rec.2020) -> encoded sRGB. Terminal transform.
+     * Deliberately NOT fusable: its hard gamut clamp is a slope kink that the
+     * OETF amplifies ~13x near black — a 33³ LUT interpolates ~0.09 of error
+     * across that kink on saturated colors. It stays an exact analytic pass
+     * until a proper gamut-compression node replaces the clamp.
+     */
     val SRGB_OUTPUT = NodeDescriptor(
         "srgb_output", emptyList(), S, ColorState.DISPLAY_SRGB
     )
@@ -97,7 +108,7 @@ object BuiltinNodes {
      * through their own characteristic curve instead.
      */
     val TONE_MAP = NodeDescriptor(
-        "tone_map", listOf(ParamSpec("exposure_bias", 0f, -4f, 4f)), S, S
+        "tone_map", listOf(ParamSpec("exposure_bias", 0f, -4f, 4f)), S, S, fusable = true
     )
 
     val GAUSSIAN_BLUR = NodeDescriptor(

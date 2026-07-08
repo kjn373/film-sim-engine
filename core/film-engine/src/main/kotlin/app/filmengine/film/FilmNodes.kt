@@ -18,6 +18,7 @@ object FilmNodes {
         input = ColorState.SCENE_LINEAR,
         output = ColorState.SCENE_LINEAR,
         optionKeys = listOf("stock"),
+        fusable = true,
     )
 
     /** Red-orange glow around speculars — light bouncing off the film base. */

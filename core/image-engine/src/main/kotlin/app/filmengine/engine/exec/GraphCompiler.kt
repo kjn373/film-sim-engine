@@ -12,7 +12,31 @@ data class Step(
     val type: String,
     val params: Map<String, Float>,
     val options: Map<String, String> = emptyMap(),
+    val inputState: ColorState = ColorState.SCENE_LINEAR,
+    /** Present only on fused steps of type [BakedLut.TYPE]. */
+    val lut: BakedLut? = null,
 )
+
+/**
+ * Payload of a fused pointwise run: an N³ RGBA lattice, r fastest then g then b —
+ * the memory order of a GL 3D texture. Input domain is shaped scene-linear
+ * (log2(x/black + 1), exact at 0); see PlanFusion in cpu-renderer for the bake.
+ */
+class BakedLut(val size: Int, val data: FloatArray) {
+    init {
+        require(size >= 2) { "LUT size must be at least 2" }
+        require(data.size == size * size * size * 4) {
+            "Expected ${size * size * size * 4} floats for a $size³ RGBA LUT, got ${data.size}"
+        }
+    }
+
+    companion object {
+        const val TYPE = "baked_lut"
+        const val KEY_SIZE = "lut_size"
+        const val KEY_SHAPER_BLACK = "shaper_black"
+        const val KEY_SHAPER_WHITE = "shaper_white"
+    }
+}
 
 data class ExecutionPlan(
     val steps: List<Step>,
@@ -70,13 +94,14 @@ class GraphCompiler(private val registry: NodeRegistry = NodeRegistry.builtin) {
                     "Node $id (${node.type}) expects ${desc.input} input but receives $state"
                 )
             }
+            val inputState = state
             state = desc.output
             for (key in node.options.keys) {
                 if (key !in desc.optionKeys) {
                     throw GraphValidationException("Unknown option '$key' for node type ${desc.type}")
                 }
             }
-            steps += Step(node.id, node.type, resolveParams(node.params, desc), node.options)
+            steps += Step(node.id, node.type, resolveParams(node.params, desc), node.options, inputState)
         }
         return ExecutionPlan(steps, state)
     }
