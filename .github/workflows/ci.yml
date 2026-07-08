@@ -1,0 +1,30 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+      # GPU parity tests self-skip on headless runners (no GL context) — by design.
+      # They run for real on developer machines; CI covers everything else.
+      - run: ./gradlew test --console=plain
+      - name: Report skipped GPU tests
+        if: always()
+        run: |
+          total=0; skipped=0
+          for f in $(find . -path '*/test-results/test/TEST-*.xml'); do
+            t=$(grep -o 'tests="[0-9]*"' "$f" | head -1 | grep -o '[0-9]*')
+            s=$(grep -o 'skipped="[0-9]*"' "$f" | head -1 | grep -o '[0-9]*')
+            total=$((total + t)); skipped=$((skipped + s))
+          done
+          echo "tests: $total, skipped (headless GPU): $skipped"
