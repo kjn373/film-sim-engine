@@ -33,7 +33,9 @@ android {
 
 dependencies {
     implementation(project(":core:film-engine"))
+    implementation(project(":core:image-engine"))
     implementation(project(":android:camera-core"))
+    implementation(project(":android:gles-renderer"))
 
     implementation("com.google.dagger:hilt-android:2.56.2")
     ksp("com.google.dagger:hilt-android-compiler:2.56.2")

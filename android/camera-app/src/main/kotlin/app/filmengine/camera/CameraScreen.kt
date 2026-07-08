@@ -1,7 +1,8 @@
 package app.filmengine.camera
 
+import android.view.SurfaceHolder
+import android.view.SurfaceView
 import android.widget.Toast
-import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -20,25 +21,35 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
 import app.filmengine.camera.core.ExposureMode
+import app.filmengine.camera.core.QualityLevel
 import app.filmengine.film.BuiltinStocks
 import kotlin.math.ln
 import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
+
+/**
+ * Stock chip descriptor: `null` id means "None" (passthrough, no film sim).
+ */
+private data class StockChip(val id: String?, val name: String)
+
+private val stockChips: List<StockChip> = buildList {
+    add(StockChip(null, "None"))
+    BuiltinStocks.all.forEach { add(StockChip(it.id, it.name)) }
+}
 
 @Composable
 fun CameraScreen(vm: CameraViewModel = hiltViewModel()) {
@@ -46,16 +57,62 @@ fun CameraScreen(vm: CameraViewModel = hiltViewModel()) {
     val lifecycleOwner = LocalLifecycleOwner.current
     val ui by vm.ui.collectAsState()
     val caps by vm.caps.collectAsState()
-    var selectedStock by remember { mutableStateOf(BuiltinStocks.all.first().id) }
+    val selectedStock by vm.selectedStock.collectAsState()
+    val frameTime by vm.frameTimeMs.collectAsState()
+    val quality by vm.qualityLevel.collectAsState()
+
+    // Bind camera once; pipeline lifecycle managed via SurfaceHolder callbacks.
+    DisposableEffect(lifecycleOwner) {
+        vm.bind(lifecycleOwner)
+        onDispose { vm.stopPipeline() }
+    }
 
     Box(Modifier.fillMaxSize()) {
+        // ── Processed preview surface ───────────────────────────────────
         AndroidView(
             modifier = Modifier.fillMaxSize(),
             factory = { ctx ->
-                PreviewView(ctx).also { view -> vm.bind(lifecycleOwner, view.surfaceProvider) }
+                SurfaceView(ctx).also { sv ->
+                    sv.holder.addCallback(object : SurfaceHolder.Callback {
+                        override fun surfaceCreated(holder: SurfaceHolder) {
+                            val s = holder.surface
+                            val r = holder.surfaceFrame
+                            vm.startPipeline(s, r.width(), r.height())
+                        }
+                        override fun surfaceChanged(holder: SurfaceHolder, fmt: Int, w: Int, h: Int) {
+                            vm.onSurfaceChanged(w, h)
+                        }
+                        override fun surfaceDestroyed(holder: SurfaceHolder) {
+                            vm.stopPipeline()
+                        }
+                    })
+                }
             },
         )
 
+        // ── Debug HUD (top-left) ────────────────────────────────────────
+        Column(
+            Modifier
+                .align(Alignment.TopStart)
+                .padding(12.dp)
+                .background(Color.Black.copy(alpha = 0.5f))
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+        ) {
+            Text(
+                "%.1f ms".format(frameTime),
+                color = if (frameTime > 16.6f) Color(0xFFFF6B6B) else Color(0xFF69DB7C),
+                fontSize = 12.sp,
+            )
+            if (quality != QualityLevel.FULL) {
+                Text(
+                    quality.name,
+                    color = Color(0xFFFFD43B),
+                    fontSize = 10.sp,
+                )
+            }
+        }
+
+        // ── Controls overlay (bottom) ───────────────────────────────────
         Column(
             Modifier
                 .align(Alignment.BottomCenter)
@@ -120,12 +177,13 @@ fun CameraScreen(vm: CameraViewModel = hiltViewModel()) {
                 }
             }
 
+            // ── Stock selector (with "None" passthrough option) ─────────
             LazyRow(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                items(BuiltinStocks.all, key = { it.id }) { stock ->
+                items(stockChips, key = { it.id ?: "_none" }) { chip ->
                     FilterChip(
-                        selected = stock.id == selectedStock,
-                        onClick = { selectedStock = stock.id },
-                        label = { Text(stock.name) },
+                        selected = chip.id == selectedStock,
+                        onClick = { vm.setStock(chip.id) },
+                        label = { Text(chip.name) },
                         modifier = Modifier.padding(end = 4.dp),
                     )
                 }

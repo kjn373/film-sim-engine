@@ -1,6 +1,6 @@
 package app.filmengine.camera
 
-import androidx.camera.core.Preview
+import android.view.Surface
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -9,6 +9,8 @@ import app.filmengine.camera.core.CameraController
 import app.filmengine.camera.core.ExposureMode
 import app.filmengine.camera.core.ExposureSettings
 import app.filmengine.camera.core.ExposureSolver
+import app.filmengine.camera.core.PreviewPipeline
+import app.filmengine.camera.core.QualityLevel
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -26,6 +28,7 @@ data class ExposureUi(
 @HiltViewModel
 class CameraViewModel @Inject constructor(
     val controller: CameraController,
+    val pipeline: PreviewPipeline,
 ) : ViewModel() {
 
     private val _caps = MutableStateFlow<CameraCaps?>(null)
@@ -34,16 +37,48 @@ class CameraViewModel @Inject constructor(
     private val _ui = MutableStateFlow(ExposureUi())
     val ui: StateFlow<ExposureUi> = _ui
 
+    private val _selectedStock = MutableStateFlow<String?>("chroma-100")
+    val selectedStock: StateFlow<String?> = _selectedStock
+
+    /** Frame time from the pipeline (ms). */
+    val frameTimeMs: StateFlow<Float> = pipeline.frameTimeMs
+
+    /** Current quality level from the degradation ladder. */
+    val qualityLevel: StateFlow<QualityLevel> = pipeline.qualityLevel
+
     /** AE reference frozen at the moment the user leaves AUTO. */
     private var meteredRef: ExposureSettings? = null
     private var userIso = 400
     private var userShutterNs = 16_666_666L
     private var ecStops = 0f
 
-    fun bind(owner: LifecycleOwner, surfaceProvider: Preview.SurfaceProvider) {
+    /**
+     * Bind CameraX to the lifecycle. The preview frames go through the
+     * pipeline's SurfaceProvider (OES texture) instead of a PreviewView.
+     */
+    fun bind(owner: LifecycleOwner) {
         viewModelScope.launch {
-            _caps.value = controller.bind(owner, surfaceProvider)
+            _caps.value = controller.bind(owner, pipeline.surfaceProvider())
         }
+    }
+
+    /** Called when the display SurfaceView is created / changed. */
+    fun startPipeline(surface: Surface, width: Int, height: Int) {
+        pipeline.start(surface, width, height)
+        pipeline.setStock(_selectedStock.value)
+    }
+
+    fun stopPipeline() {
+        pipeline.stop()
+    }
+
+    fun onSurfaceChanged(width: Int, height: Int) {
+        pipeline.onSurfaceChanged(width, height)
+    }
+
+    fun setStock(stockId: String?) {
+        _selectedStock.value = stockId
+        pipeline.setStock(stockId)
     }
 
     fun setMode(mode: ExposureMode) {
@@ -93,5 +128,10 @@ class CameraViewModel @Inject constructor(
         _ui.value = ExposureUi(
             mode, solved.settings.iso, solved.settings.shutterNs, ecStops, solved.offsetStops,
         )
+    }
+
+    override fun onCleared() {
+        pipeline.stop()
+        super.onCleared()
     }
 }

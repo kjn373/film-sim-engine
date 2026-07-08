@@ -7,6 +7,7 @@ import android.opengl.EGLDisplay
 import android.opengl.EGLSurface
 import android.opengl.EGLExt
 import android.opengl.GLES31
+import android.view.Surface
 
 /**
  * Holds an EGL 1.4 context targeting GLES 3.1 with a 1×1 pbuffer surface.
@@ -15,7 +16,7 @@ import android.opengl.GLES31
  * For live-preview (B4), the caller will create a window surface tied to a
  * SurfaceTexture and pass it to [makeCurrentTo].
  */
-internal object GlesContext {
+object GlesContext {
     private var display: EGLDisplay = EGL14.EGL_NO_DISPLAY
     private var context: EGLContext = EGL14.EGL_NO_CONTEXT
     private var pbuffer: EGLSurface = EGL14.EGL_NO_SURFACE
@@ -37,6 +38,23 @@ internal object GlesContext {
     fun makeCurrentTo(surface: EGLSurface) {
         check(available) { "No GLES 3.1 context available" }
         EGL14.eglMakeCurrent(display, surface, surface, context)
+    }
+
+    /** Create a window-backed EGL surface for live preview rendering. */
+    fun createWindowSurface(surface: Surface): EGLSurface {
+        check(available)
+        val attribs = intArrayOf(EGL14.EGL_NONE)
+        val eglSurface = EGL14.eglCreateWindowSurface(display, chooseConfig(display), surface, attribs, 0)
+        check(eglSurface != EGL14.EGL_NO_SURFACE) { "eglCreateWindowSurface failed" }
+        return eglSurface
+    }
+
+    fun swapBuffers(surface: EGLSurface) {
+        EGL14.eglSwapBuffers(display, surface)
+    }
+
+    fun destroySurface(surface: EGLSurface) {
+        EGL14.eglDestroySurface(display, surface)
     }
 
     /** Exposes the display for callers that need to create their own window surfaces. */
@@ -88,7 +106,7 @@ internal object GlesContext {
             EGL14.EGL_GREEN_SIZE, 8,
             EGL14.EGL_BLUE_SIZE, 8,
             EGL14.EGL_ALPHA_SIZE, 8,
-            EGL14.EGL_SURFACE_TYPE, EGL14.EGL_PBUFFER_BIT,
+            EGL14.EGL_SURFACE_TYPE, EGL14.EGL_PBUFFER_BIT or EGL14.EGL_WINDOW_BIT,
             EGL14.EGL_NONE,
         )
         val configs = arrayOfNulls<EGLConfig>(1)

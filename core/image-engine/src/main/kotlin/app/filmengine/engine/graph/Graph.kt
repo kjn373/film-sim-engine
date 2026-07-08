@@ -66,6 +66,10 @@ class NodeRegistry(descriptors: List<NodeDescriptor>) {
     fun descriptor(type: String): NodeDescriptor =
         byType[type] ?: throw GraphValidationException("Unknown node type: $type")
 
+    /** Merge two registries; the right-hand side wins on type collisions. */
+    operator fun plus(other: NodeRegistry): NodeRegistry =
+        NodeRegistry((byType + other.byType).values.toList())
+
     companion object {
         val builtin = NodeRegistry(BuiltinNodes.all)
     }
