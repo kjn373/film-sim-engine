@@ -116,7 +116,101 @@ object BuiltinStocks {
         saturation = 0f,
     )
 
-    val all = listOf(CHROMA_100, NEGATO_400, MONO_400)
+    /** Punchy fine-grain slide: steep, hard toe, heavy saturation. */
+    val CHROMA_64 = FilmStock(
+        id = "chroma-64",
+        name = "Chroma 64",
+        curve = CharacteristicCurve(gamma = 1.35f, toe = 0.7f, shoulder = 0.9f, black = 0.0008f, white = 1.0f),
+        dye = Mat3(
+            floatArrayOf(
+                1.05f, -0.02f, -0.03f,
+                -0.02f, 1.05f, -0.03f,
+                -0.03f, -0.01f, 1.04f,
+            )
+        ),
+        saturation = 1.4f,
+    )
+
+    /** Neutral slide: honest colour, gentle shoulder — the portrait slide. */
+    val CHROMA_200N = FilmStock(
+        id = "chroma-200n",
+        name = "Chroma 200 Neutral",
+        curve = CharacteristicCurve(gamma = 1.1f, toe = 0.9f, shoulder = 1.15f, black = 0.0015f, white = 1.0f),
+        dye = Mat3(
+            floatArrayOf(
+                1.01f, 0.00f, -0.01f,
+                0.00f, 1.00f, 0.00f,
+                -0.01f, 0.01f, 1.00f,
+            )
+        ),
+        saturation = 1.1f,
+    )
+
+    /** Soft warm portrait negative: low contrast, long roll-off, skin-friendly. */
+    val NEGATO_160 = FilmStock(
+        id = "negato-160",
+        name = "Negato 160",
+        curve = CharacteristicCurve(gamma = 0.8f, toe = 1.5f, shoulder = 1.7f, black = 0.008f, white = 0.90f),
+        dye = Mat3(
+            floatArrayOf(
+                1.03f, -0.01f, -0.02f,
+                0.02f, 0.97f, 0.01f,
+                0.00f, 0.02f, 0.98f,
+            )
+        ),
+        saturation = 0.9f,
+    )
+
+    /** Tungsten-balanced night negative: cool cast, lifted shadows — pair with halation. */
+    val NEGATO_800T = FilmStock(
+        id = "negato-800t",
+        name = "Negato 800T",
+        curve = CharacteristicCurve(gamma = 0.88f, toe = 1.3f, shoulder = 1.4f, black = 0.005f, white = 0.93f),
+        dye = Mat3(
+            floatArrayOf(
+                0.98f, 0.01f, 0.01f,
+                0.00f, 0.99f, 0.01f,
+                0.01f, -0.03f, 1.02f,
+            )
+        ),
+        saturation = 1.0f,
+    )
+
+    /** Fine-grain contrasty B&W, green-weighted sensitivity. */
+    val MONO_100 = FilmStock(
+        id = "mono-100",
+        name = "Mono 100",
+        curve = CharacteristicCurve(gamma = 1.2f, toe = 0.95f, shoulder = 1.05f, black = 0.001f, white = 0.99f),
+        sensitivity = Mat3(
+            floatArrayOf(
+                0.30f, 0.60f, 0.10f,
+                0.30f, 0.60f, 0.10f,
+                0.30f, 0.60f, 0.10f,
+            )
+        ),
+        saturation = 0f,
+    )
+
+    /** Push-process low-light B&W: soft, lifted, flat — pair with heavy grain. */
+    val MONO_3200P = FilmStock(
+        id = "mono-3200p",
+        name = "Mono 3200 Push",
+        curve = CharacteristicCurve(gamma = 0.9f, toe = 1.5f, shoulder = 1.6f, black = 0.004f, white = 0.95f),
+        sensitivity = Mat3(
+            floatArrayOf(
+                0.38f, 0.52f, 0.10f,
+                0.38f, 0.52f, 0.10f,
+                0.38f, 0.52f, 0.10f,
+            )
+        ),
+        saturation = 0f,
+    )
+
+    val all = listOf(
+        CHROMA_64, CHROMA_100, CHROMA_200N,
+        NEGATO_160, NEGATO_400, NEGATO_800T,
+        MONO_100, MONO_400, MONO_3200P,
+    )
 
     fun byId(id: String): FilmStock =
         all.find { it.id == id } ?: error("Unknown film stock '$id'. Available: ${all.map { it.id }}")

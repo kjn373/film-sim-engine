@@ -53,7 +53,7 @@ Legend: `[x]` done · `[~]` partial · `[ ]` not started.
   - gates: fused-vs-unfused worst < 0.015 / mean < 0.003 on an HDR card; black exact; CPU↔GPU fused parity < 1.5e-2
   - follow-up (Phase A backlog): gamut-compression node to replace the hard clamp — fixes hue skew on saturated colors AND makes the output transform fusable
 - [ ] **A5b. RAW develop nodes**: highlight reconstruction + shadow lift (meaningful once RAW/DNG input exists — Phase B)
-- [ ] **A6. Stock catalog growth**: 6+ additional stocks; `tooling/film-lab` fitting skeleton (curve fit from datasheet/scan pairs)
+- [x] **A6. Stock catalog growth**: 9 stocks total — chroma-64/100/200n (slide: punchy/classic/neutral), negato-160/400/800t (negative: portrait/warm/tungsten-night), mono-100/400/3200p (B&W: fine/classic/push) — all covered by the shared property suite (monotonic, grey-anchored, bounded, neutral matrices); new stocks visually verified. `tooling/film-lab` CurveFitter: grid + coordinate-descent fit of gamma/toe/shoulder from (stops, value) samples — recovers every builtin stock's curve to rmse < 2e-3; the pipeline for fitting real scan data later.
 - [ ] **A7. Tiled rendering**: 512px tiles + overlap = max kernel radius, for large exports on both backends
 
 ### Phase B — Android camera app (needs Android SDK + device)
