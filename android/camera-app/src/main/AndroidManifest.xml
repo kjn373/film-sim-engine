@@ -8,6 +8,7 @@
     <uses-permission android:name="android.permission.CAMERA" />
 
     <application
+        android:name=".FilmEngineApp"
         android:label="FilmEngine"
         android:theme="@android:style/Theme.Material.NoActionBar"
         android:supportsRtl="true">
