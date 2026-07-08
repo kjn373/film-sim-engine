@@ -293,9 +293,10 @@ object GlKernels {
             """
             uniform float amount;
             uniform float seed;
+            uniform vec2 tileOffset;
             void main() {
                 vec4 c = texture(src, uv);
-                uvec2 pix = uvec2(ivec2(gl_FragCoord.xy));
+                uvec2 pix = uvec2(ivec2(gl_FragCoord.xy) + ivec2(tileOffset));
                 uint h = pix.x * 1664525u + pix.y * 1013904223u + uint(seed);
                 h ^= h >> 16u; h *= 0x45d9f3bu;
                 h ^= h >> 16u; h *= 0x45d9f3bu;
@@ -310,6 +311,11 @@ object GlKernels {
     ) { p, s ->
         glUniform1f(loc(p, "amount"), s.params.getValue("amount"))
         glUniform1f(loc(p, "seed"), s.params.getValue("seed"))
+        glUniform2f(
+            loc(p, "tileOffset"),
+            s.params[app.filmengine.engine.exec.TiledRenderer.TILE_OX] ?: 0f,
+            s.params[app.filmengine.engine.exec.TiledRenderer.TILE_OY] ?: 0f,
+        )
     }
 
     // ── baked LUT (pass fusion, D2) ─────────────────────────────────────────

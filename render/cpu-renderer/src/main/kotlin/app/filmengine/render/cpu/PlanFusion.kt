@@ -55,7 +55,7 @@ object PlanFusion {
             }
         }
         flush()
-        return ExecutionPlan(out, plan.outputState)
+        return ExecutionPlan(out, plan.outputState, plan.tileMargin)
     }
 
     private fun bake(

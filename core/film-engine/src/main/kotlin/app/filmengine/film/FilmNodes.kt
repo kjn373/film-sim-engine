@@ -31,6 +31,7 @@ object FilmNodes {
         ),
         input = ColorState.SCENE_LINEAR,
         output = ColorState.SCENE_LINEAR,
+        spatialRadius = { p -> app.filmengine.engine.node.Gaussian.radius(p.getValue("sigma")) },
     )
 
     /** Procedural, luminance-coupled monochromatic grain (strongest in midtones). */
@@ -41,6 +42,10 @@ object FilmNodes {
         params = listOf(
             ParamSpec("amount", 0.25f, 0f, 1f),
             ParamSpec("seed", 0f, 0f, 65535f),
+            // Injected by TiledRenderer so hash coordinates stay image-absolute;
+            // 0 for whole-image renders.
+            ParamSpec(app.filmengine.engine.exec.TiledRenderer.TILE_OX, 0f, 0f, 65535f),
+            ParamSpec(app.filmengine.engine.exec.TiledRenderer.TILE_OY, 0f, 0f, 65535f),
         ),
         input = ColorState.SCENE_LINEAR,
         output = ColorState.SCENE_LINEAR,

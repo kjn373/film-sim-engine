@@ -54,7 +54,9 @@ Legend: `[x]` done · `[~]` partial · `[ ]` not started.
   - follow-up (Phase A backlog): gamut-compression node to replace the hard clamp — fixes hue skew on saturated colors AND makes the output transform fusable
 - [ ] **A5b. RAW develop nodes**: highlight reconstruction + shadow lift (meaningful once RAW/DNG input exists — Phase B)
 - [x] **A6. Stock catalog growth**: 9 stocks total — chroma-64/100/200n (slide: punchy/classic/neutral), negato-160/400/800t (negative: portrait/warm/tungsten-night), mono-100/400/3200p (B&W: fine/classic/push) — all covered by the shared property suite (monotonic, grey-anchored, bounded, neutral matrices); new stocks visually verified. `tooling/film-lab` CurveFitter: grid + coordinate-descent fit of gamma/toe/shoulder from (stops, value) samples — recovers every builtin stock's curve to rmse < 2e-3; the pipeline for fitting real scan data later.
-- [ ] **A7. Tiled rendering**: 512px tiles + overlap = max kernel radius, for large exports on both backends
+- [x] **A7. Tiled rendering**: `TiledRenderer` wraps any backend; compiler computes `ExecutionPlan.tileMargin` (Σ per-step `spatialRadius`); tiles expand by the margin so spatial nodes see full neighborhoods; grain receives absolute tile offsets (`tile_ox`/`tile_oy`) so its hash stays image-absolute. Gates: tiled CPU output is **bit-identical** to whole-image output (plain and fused plans); tiled GPU matches whole-image GPU < 1e-6.
+
+**Phase A complete.** Parked follow-ups: A5b RAW develop nodes (needs Phase B RAW input), gamut-compression node (replaces srgb_output's hard clamp, unlocks fusing it).
 
 ### Phase B — Android camera app (needs Android SDK + device)
 - [ ] **B1. App scaffold**: `android/camera-app` — Android Gradle plugin, Hilt, Compose shell, module wiring per ARCHITECTURE §3

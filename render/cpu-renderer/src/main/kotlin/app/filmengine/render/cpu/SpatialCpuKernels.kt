@@ -98,11 +98,15 @@ object SpatialCpuKernels {
     val grain = CpuKernel { src, step ->
         val amount = step.params.getValue("amount")
         val seed = step.params.getValue("seed").toInt()
+        // Absolute image coords even when rendering a tile — keeps grain identical
+        // between tiled and whole-image renders.
+        val ox = step.params[app.filmengine.engine.exec.TiledRenderer.TILE_OX]?.toInt() ?: 0
+        val oy = step.params[app.filmengine.engine.exec.TiledRenderer.TILE_OY]?.toInt() ?: 0
         val out = src.copy()
         val w = src.width
         for (y in 0 until src.height) {
             for (x in 0 until w) {
-                var hsh = x * 1664525 + y * 1013904223 + seed
+                var hsh = (x + ox) * 1664525 + (y + oy) * 1013904223 + seed
                 hsh = hsh xor (hsh ushr 16)
                 hsh *= 0x45d9f3b
                 hsh = hsh xor (hsh ushr 16)

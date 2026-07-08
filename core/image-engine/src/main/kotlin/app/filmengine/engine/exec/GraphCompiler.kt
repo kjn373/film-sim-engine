@@ -41,6 +41,8 @@ class BakedLut(val size: Int, val data: FloatArray) {
 data class ExecutionPlan(
     val steps: List<Step>,
     val outputState: ColorState,
+    /** Total neighborhood the plan reads: the tile overlap needed for exact tiling. */
+    val tileMargin: Int = 0,
 )
 
 /** Backend contract. Implementations: cpu-renderer (reference), gpu-renderer (production). */
@@ -84,6 +86,7 @@ class GraphCompiler(private val registry: NodeRegistry = NodeRegistry.builtin) {
         }
 
         var state = graph.sourceState
+        var margin = 0
         val steps = mutableListOf<Step>()
         for (id in chain) {
             val node = byId.getValue(id)
@@ -101,9 +104,11 @@ class GraphCompiler(private val registry: NodeRegistry = NodeRegistry.builtin) {
                     throw GraphValidationException("Unknown option '$key' for node type ${desc.type}")
                 }
             }
-            steps += Step(node.id, node.type, resolveParams(node.params, desc), node.options, inputState)
+            val resolved = resolveParams(node.params, desc)
+            margin += desc.spatialRadius(resolved)
+            steps += Step(node.id, node.type, resolved, node.options, inputState)
         }
-        return ExecutionPlan(steps, state)
+        return ExecutionPlan(steps, state, margin)
     }
 
     private fun resolveParams(

@@ -26,6 +26,12 @@ data class NodeDescriptor(
      * exactly the nodes PlanFusion may bake into a 3D LUT (ARCHITECTURE.md D2).
      */
     val fusable: Boolean = false,
+    /**
+     * How many pixels of neighborhood this node reads, given its resolved params.
+     * Summed over a plan it becomes the tile overlap TiledRenderer needs for
+     * tiled output to be exact.
+     */
+    val spatialRadius: (Map<String, Float>) -> Int = { 0 },
 )
 
 /** One node in a user's graph: a reference to a type plus parameter values. */
@@ -112,7 +118,8 @@ object BuiltinNodes {
     )
 
     val GAUSSIAN_BLUR = NodeDescriptor(
-        "gaussian_blur", listOf(ParamSpec("sigma", 2f, 0.1f, 24f)), S, S
+        "gaussian_blur", listOf(ParamSpec("sigma", 2f, 0.1f, 24f)), S, S,
+        spatialRadius = { p -> app.filmengine.engine.node.Gaussian.radius(p.getValue("sigma")) },
     )
     /** Additive bloom: bright pass above threshold, blurred, added back. */
     val BLOOM = NodeDescriptor(
@@ -122,7 +129,8 @@ object BuiltinNodes {
             ParamSpec("intensity", 0.5f, 0f, 4f),
             ParamSpec("sigma", 4f, 0.5f, 24f),
         ),
-        S, S
+        S, S,
+        spatialRadius = { p -> app.filmengine.engine.node.Gaussian.radius(p.getValue("sigma")) },
     )
 
     val all = listOf(

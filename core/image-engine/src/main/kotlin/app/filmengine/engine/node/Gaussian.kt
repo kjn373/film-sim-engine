@@ -12,10 +12,15 @@ object Gaussian {
     /** Hard cap so GLSL can declare `float weights[MAX_RADIUS + 1]`. */
     const val MAX_RADIUS = 24
 
+    /** Kernel radius for a given sigma — also each blur pass's tile margin. */
+    fun radius(sigma: Float): Int {
+        require(sigma > 0f) { "sigma must be positive" }
+        return min(ceil(3f * sigma).toInt(), MAX_RADIUS).coerceAtLeast(1)
+    }
+
     /** Half-kernel weights `[0..radius]`, normalized so the full kernel sums to 1. */
     fun weights(sigma: Float): FloatArray {
-        require(sigma > 0f) { "sigma must be positive" }
-        val radius = min(ceil(3f * sigma).toInt(), MAX_RADIUS).coerceAtLeast(1)
+        val radius = radius(sigma)
         val w = FloatArray(radius + 1)
         val twoSigmaSq = 2f * sigma * sigma
         for (i in 0..radius) w[i] = exp(-(i * i) / twoSigmaSq)

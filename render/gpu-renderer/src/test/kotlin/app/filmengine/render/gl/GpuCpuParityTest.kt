@@ -177,6 +177,30 @@ class GpuCpuParityTest {
         assertParity(graph, "creative-chain")
     }
 
+    @Test
+    fun `tiled GPU rendering matches whole-image GPU rendering`() {
+        assumeTrue(GlContext.available, "no OpenGL context on this machine")
+        val graph = ProcessGraph(
+            nodes = listOf(
+                NodeInstance("blur", "gaussian_blur", mapOf("sigma" to 2f)),
+                NodeInstance("grn", "grain", mapOf("amount" to 0.4f, "seed" to 5f)),
+                NodeInstance("out", "srgb_output"),
+            ),
+            edges = listOf(Edge("blur", "grn"), Edge("grn", "out")),
+            outputNodeId = "out",
+        )
+        val plan = compiler.compile(graph)
+        val src = hdrTestImage()
+        val whole = gpu.render(plan, src)
+        val tiled = app.filmengine.engine.exec.TiledRenderer(gpu, tileSize = 24).render(plan, src)
+        var worst = 0f
+        for (i in whole.data.indices) {
+            val d = abs(whole.data[i] - tiled.data[i])
+            if (d > worst) worst = d
+        }
+        assertTrue(worst < 1e-6f, "tiled GPU deviates $worst from whole-image GPU")
+    }
+
     private companion object {
         // Absolute, on data spanning ~0..3 linear: generous enough for driver
         // transcendental variance, tight enough to catch any real math drift.
