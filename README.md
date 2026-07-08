@@ -13,5 +13,6 @@ Computational photography platform monorepo. Architecture: [docs/ARCHITECTURE.md
 | `desktop/cli-renderer` | Headless renderer: image or test chart in, film-simulated PNG out. | film-engine, cpu-renderer |
 | `tooling/film-lab` | Curve fitting: characteristic-curve params from measured film samples. | film-engine |
 | `backend/backend-api` | Ktor modular monolith: auth (Argon2id + JWT/refresh), Postgres/Flyway. | — |
+| `android/camera-app` | Android app: Compose shell, CameraX preview/capture (B1 scaffold). | film-engine |
 
 Build: `./gradlew test` (JDK 21).

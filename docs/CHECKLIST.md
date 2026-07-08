@@ -58,8 +58,10 @@ Legend: `[x]` done · `[~]` partial · `[ ]` not started.
 
 **Phase A complete.** Parked follow-ups: A5b RAW develop nodes (needs Phase B RAW input), gamut-compression node (replaces srgb_output's hard clamp, unlocks fusing it).
 
-### Phase B — Android camera app (needs Android SDK + device)
-- [ ] **B1. App scaffold**: `android/camera-app` — Android Gradle plugin, Hilt, Compose shell, module wiring per ARCHITECTURE §3
+### App scaffold (B1)
+- [x] **B1. App scaffold**: `android/camera-app` builds `camera-app-debug.apk` (10.3 MB) — AGP 8.7.3 + Kotlin/Compose plugins coexisting with the JVM modules (root build applies kotlin-jvm only outside `:android`); Compose shell with permission gate; CameraX preview + JPEG capture to MediaStore (`Pictures/FilmEngine`); stock-selector strip fed by `film-engine`'s BuiltinStocks — engine modules verified linking into the APK through D8/R8. Android SDK (platform 35) installed via command-line tools. Hilt deferred to B2 with the session controller (`ponytail:` note in code).
+
+### Phase B — Android camera app (remaining; on-device work needs a phone)
 - [ ] **B2. camera-core**: CameraX session + Camera2 interop (ISO, shutter, MF, WB, AE/AF lock, exposure comp)
 - [ ] **B3. GLES backend**: port gpu-renderer pass structure to GLES 3.1 + OES camera texture input (same GLSL sources)
 - [ ] **B4. Live film preview**: preview-profile graph compilation, 60 FPS target, degradation ladder
