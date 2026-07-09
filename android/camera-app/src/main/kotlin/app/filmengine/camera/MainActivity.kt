@@ -24,20 +24,26 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 
+private enum class Screen { CAMERA, EDITOR }
+
 @dagger.hilt.android.AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
-                PermissionGate()
+                var screen by remember { mutableStateOf(Screen.CAMERA) }
+                when (screen) {
+                    Screen.CAMERA -> PermissionGate(onOpenEditor = { screen = Screen.EDITOR })
+                    Screen.EDITOR -> EditorScreen(onBack = { screen = Screen.CAMERA })
+                }
             }
         }
     }
 }
 
 @Composable
-private fun PermissionGate() {
+private fun PermissionGate(onOpenEditor: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var granted by remember {
         mutableStateOf(
@@ -50,7 +56,7 @@ private fun PermissionGate() {
     ) { granted = it }
 
     if (granted) {
-        CameraScreen()
+        CameraScreen(onOpenEditor = onOpenEditor)
     } else {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Button(onClick = { launcher.launch(Manifest.permission.CAMERA) }) {

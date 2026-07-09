@@ -22,18 +22,42 @@ class TiledRenderer(
         if (source.width <= tileSize && source.height <= tileSize) {
             return backend.render(plan, source)
         }
-        val margin = plan.tileMargin
         val out = ImageBuffer.alloc(source.width, source.height)
+        renderStreaming(
+            plan, source.width, source.height,
+            fetch = { x, y, w, h -> source.crop(x, y, w, h) },
+            write = { x, y, tile -> out.blit(tile, 0, 0, x, y, tile.width, tile.height) },
+        )
+        return out
+    }
+
+    /**
+     * Streaming variant: tiles are fetched and delivered through callbacks, so
+     * neither the full float source nor the full float output ever exists in
+     * memory — a 48MP export otherwise needs ~1.5 GB of ImageBuffer (B8).
+     *
+     * [fetch] must return the *margin-expanded* region it is asked for (the
+     * renderer computes margins itself — callers just crop/decode that rect);
+     * [write] receives exact tile-sized buffers at their absolute position.
+     */
+    fun renderStreaming(
+        plan: ExecutionPlan,
+        width: Int,
+        height: Int,
+        fetch: (x: Int, y: Int, w: Int, h: Int) -> ImageBuffer,
+        write: (x: Int, y: Int, tile: ImageBuffer) -> Unit,
+    ) {
+        val margin = plan.tileMargin
         var y0 = 0
-        while (y0 < source.height) {
-            val h0 = minOf(tileSize, source.height - y0)
+        while (y0 < height) {
+            val h0 = minOf(tileSize, height - y0)
             var x0 = 0
-            while (x0 < source.width) {
-                val w0 = minOf(tileSize, source.width - x0)
+            while (x0 < width) {
+                val w0 = minOf(tileSize, width - x0)
                 val mx = maxOf(0, x0 - margin)
                 val my = maxOf(0, y0 - margin)
-                val mx1 = minOf(source.width, x0 + w0 + margin)
-                val my1 = minOf(source.height, y0 + h0 + margin)
+                val mx1 = minOf(width, x0 + w0 + margin)
+                val my1 = minOf(height, y0 + h0 + margin)
 
                 val shifted = ExecutionPlan(
                     plan.steps.map {
@@ -42,13 +66,14 @@ class TiledRenderer(
                     plan.outputState,
                     plan.tileMargin,
                 )
-                val rendered = backend.render(shifted, source.crop(mx, my, mx1 - mx, my1 - my))
-                out.blit(rendered, srcX = x0 - mx, srcY = y0 - my, dstX = x0, dstY = y0, w = w0, h = h0)
+                val rendered = backend.render(shifted, fetch(mx, my, mx1 - mx, my1 - my))
+                val tile = ImageBuffer.alloc(w0, h0)
+                tile.blit(rendered, srcX = x0 - mx, srcY = y0 - my, dstX = 0, dstY = 0, w = w0, h = h0)
+                write(x0, y0, tile)
                 x0 += tileSize
             }
             y0 += tileSize
         }
-        return out
     }
 
     companion object {

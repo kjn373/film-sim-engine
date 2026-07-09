@@ -34,6 +34,7 @@ android {
 dependencies {
     implementation(project(":core:film-engine"))
     implementation(project(":core:image-engine"))
+    implementation(project(":core:recipe-engine"))
     implementation(project(":render:cpu-renderer"))
     implementation(project(":android:camera-core"))
     implementation(project(":android:gles-renderer"))
@@ -44,6 +45,13 @@ dependencies {
 
     implementation("androidx.camera:camera-view:1.5.3")
     implementation("androidx.work:work-runtime-ktx:2.10.1")
+
+    // Editor (B8): edit sessions + append-only version history, HEIF export
+    implementation("androidx.room:room-runtime:2.7.1")
+    implementation("androidx.room:room-ktx:2.7.1")
+    ksp("androidx.room:room-compiler:2.7.1")
+    implementation("androidx.heifwriter:heifwriter:1.0.0")
+    implementation("androidx.exifinterface:exifinterface:1.3.7")
 
     implementation(platform("androidx.compose:compose-bom:2024.12.01"))
     implementation("androidx.compose.ui:ui")

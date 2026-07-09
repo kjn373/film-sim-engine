@@ -63,7 +63,7 @@ private val stockChips: List<StockChip> = buildList {
 }
 
 @Composable
-fun CameraScreen(vm: CameraViewModel = hiltViewModel()) {
+fun CameraScreen(onOpenEditor: () -> Unit = {}, vm: CameraViewModel = hiltViewModel()) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val ui by vm.ui.collectAsState()
@@ -126,6 +126,12 @@ fun CameraScreen(vm: CameraViewModel = hiltViewModel()) {
                     fontSize = 10.sp,
                 )
             }
+            Text(
+                "Editor ▸",
+                color = Color.White,
+                fontSize = 12.sp,
+                modifier = Modifier.clickable(onClick = onOpenEditor).padding(top = 4.dp),
+            )
         }
 
         // ── Scope overlay (top-right) ───────────────────────────────────
