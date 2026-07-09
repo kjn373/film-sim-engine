@@ -58,6 +58,20 @@ object MediaImages {
         return uri
     }
 
+    /** Rewrite an existing MediaStore JPEG in place (we own the entry). */
+    fun overwriteJpeg(context: Context, uri: Uri, bitmap: Bitmap) {
+        context.contentResolver.openOutputStream(uri, "wt")
+            ?.use { bitmap.compress(Bitmap.CompressFormat.JPEG, 95, it) }
+            ?: error("Cannot open $uri for writing")
+    }
+
+    /** Centre square crop (for the 1:1 aspect ratio). Returns a new bitmap. */
+    fun centerCropSquare(src: Bitmap): Bitmap {
+        val edge = minOf(src.width, src.height)
+        if (edge == src.width && edge == src.height) return src
+        return Bitmap.createBitmap(src, (src.width - edge) / 2, (src.height - edge) / 2, edge, edge)
+    }
+
     /** HEIF via the hardware codec. heifwriter needs API 28+ (manifest-overridden). */
     @RequiresApi(Build.VERSION_CODES.P)
     fun saveHeif(context: Context, bitmap: Bitmap, name: String): Uri {

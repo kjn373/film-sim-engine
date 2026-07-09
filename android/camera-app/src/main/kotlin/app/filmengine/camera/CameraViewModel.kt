@@ -5,6 +5,7 @@ import android.view.Surface
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import app.filmengine.camera.core.AspectRatioMode
 import app.filmengine.camera.core.CameraCaps
 import app.filmengine.camera.core.CameraController
 import app.filmengine.camera.core.ExposureMode
@@ -62,6 +63,25 @@ class CameraViewModel @Inject constructor(
     private val _rawEnabled = MutableStateFlow(false)
     val rawEnabled: StateFlow<Boolean> = _rawEnabled
 
+    private val _aspect = MutableStateFlow(AspectRatioMode.RATIO_4_3)
+    val aspect: StateFlow<AspectRatioMode> = _aspect
+
+    private val _cameraLabel = MutableStateFlow("")
+    val cameraLabel: StateFlow<String> = _cameraLabel
+
+    /** More than one camera to switch between. */
+    private val _canSwitchCamera = MutableStateFlow(false)
+    val canSwitchCamera: StateFlow<Boolean> = _canSwitchCamera
+
+    // ── shutter feedback ─────────────────────────────────────────────────────
+    /** A capture is in flight — disables the shutter and shows a spinner. */
+    private val _capturing = MutableStateFlow(false)
+    val capturing: StateFlow<Boolean> = _capturing
+
+    /** Bumped on every shutter press to trigger the viewfinder flash. */
+    private val _flashTick = MutableStateFlow(0)
+    val flashTick: StateFlow<Int> = _flashTick
+
     // ── viewfinder aids (B6) ────────────────────────────────────────────────
     private val _scopeMode = MutableStateFlow(ScopeMode.OFF)
     val scopeMode: StateFlow<ScopeMode> = _scopeMode
@@ -94,7 +114,23 @@ class CameraViewModel @Inject constructor(
     fun bind(owner: LifecycleOwner) {
         viewModelScope.launch {
             _caps.value = controller.bind(owner, pipeline.surfaceProvider())
+            _cameraLabel.value = controller.currentCameraLabel
+            _canSwitchCamera.value = controller.availableCameraLabels.size > 1
         }
+    }
+
+    /** Cycle to the next physical camera (front / back / extra lenses). */
+    fun switchCamera() {
+        _caps.value = controller.switchCamera()
+        _cameraLabel.value = controller.currentCameraLabel
+        // RAW support is per-camera; reflect what the new one reports.
+        _rawEnabled.value = _rawEnabled.value && _caps.value?.rawSupported == true
+    }
+
+    fun cycleAspect() {
+        val next = AspectRatioMode.entries[(_aspect.value.ordinal + 1) % AspectRatioMode.entries.size]
+        _aspect.value = next
+        controller.setAspectRatio(next)
     }
 
     /** Called when the display SurfaceView is created / changed. */
@@ -231,15 +267,21 @@ class CameraViewModel @Inject constructor(
     }
 
     /**
-     * Capture → MediaStore immediately; then, if a stock is selected, hand the
-     * saved JPEG to the full-quality render job ("None" needs no processing).
+     * Capture → MediaStore immediately; then, if a filter is selected or a
+     * non-native crop is chosen, post-process the saved JPEG in place so the
+     * gallery photo matches the live preview (filter applied, correct crop).
      */
     fun takePhoto(onResult: (Boolean, String) -> Unit) {
+        if (_capturing.value) return // ignore double-taps while a shot is in flight
         val stockId = _selectedStock.value
+        val cropSquare = _aspect.value.cropSquare
+        _capturing.value = true
+        _flashTick.value += 1 // immediate visual cue, before the sensor returns
         controller.takePhoto { success, message, jpegUri ->
-            if (success && jpegUri != null && stockId != null) {
-                RenderWorker.enqueue(appContext, jpegUri, stockId)
+            if (success && jpegUri != null && (stockId != null || cropSquare)) {
+                RenderWorker.enqueue(appContext, jpegUri, stockId, cropSquare)
             }
+            _capturing.value = false
             onResult(success, message)
         }
     }

@@ -55,9 +55,21 @@ class CameraController(private val context: Context) {
     private var imageCapture: ImageCapture? = null
     private var provider: ProcessCameraProvider? = null
     private var owner: LifecycleOwner? = null
+    private var surfaceProvider: Preview.SurfaceProvider? = null
     private var rawSupported = false
     private var rawOnlySupported = false
     private var rawEnabled = false
+
+    // ── camera selection (front/back + extra lenses) ─────────────────────────
+    private val cameras = mutableListOf<CameraSelector>()
+    private val cameraLabels = mutableListOf<String>()
+    private var cameraIndex = 0
+    private var lensSelector: CameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+    private var aspect: AspectRatioMode = AspectRatioMode.RATIO_4_3
+
+    /** Human labels for the discovered cameras, in switch order. */
+    val availableCameraLabels: List<String> get() = cameraLabels.toList()
+    val currentCameraLabel: String get() = cameraLabels.getOrElse(cameraIndex) { "CAM" }
 
     // Composed control state
     private var manualExposure: ExposureSettings? = null
@@ -65,60 +77,111 @@ class CameraController(private val context: Context) {
     private var aeLocked = false
     private var awbLocked = false
 
+    private val meteredCallback = object : CameraCaptureSession.CaptureCallback() {
+        override fun onCaptureCompleted(
+            session: CameraCaptureSession,
+            request: CaptureRequest,
+            result: TotalCaptureResult,
+        ) {
+            // Only trust the pair as "metered" while AE is actually running.
+            if (manualExposure != null) return
+            val iso = result.get(CaptureResult.SENSOR_SENSITIVITY) ?: return
+            val shutter = result.get(CaptureResult.SENSOR_EXPOSURE_TIME) ?: return
+            _metered.value = ExposureSettings(iso, shutter)
+        }
+    }
+
     suspend fun bind(owner: LifecycleOwner, surfaceProvider: Preview.SurfaceProvider): CameraCaps {
         val provider = cameraProvider()
-        val previewBuilder = Preview.Builder()
-        Camera2Interop.Extender(previewBuilder).setSessionCaptureCallback(
-            object : CameraCaptureSession.CaptureCallback() {
-                override fun onCaptureCompleted(
-                    session: CameraCaptureSession,
-                    request: CaptureRequest,
-                    result: TotalCaptureResult,
-                ) {
-                    // Only trust the pair as "metered" while AE is actually running.
-                    if (manualExposure != null) return
-                    val iso = result.get(CaptureResult.SENSOR_SENSITIVITY) ?: return
-                    val shutter = result.get(CaptureResult.SENSOR_EXPOSURE_TIME) ?: return
-                    _metered.value = ExposureSettings(iso, shutter)
-                }
+        this.provider = provider
+        this.owner = owner
+        this.surfaceProvider = surfaceProvider
+        discoverCameras(provider)
+        return rebind()
+    }
+
+    /** Enumerate every camera CameraX exposes (front, back, and any extra lenses). */
+    private fun discoverCameras(provider: ProcessCameraProvider) {
+        cameras.clear()
+        cameraLabels.clear()
+        var back = 0
+        var front = 0
+        for (info in provider.availableCameraInfos) {
+            cameras += info.cameraSelector
+            cameraLabels += when (info.lensFacing) {
+                CameraSelector.LENS_FACING_FRONT -> if (front++ == 0) "FRONT" else "FRONT ${front}"
+                CameraSelector.LENS_FACING_BACK -> if (back++ == 0) "BACK" else "BACK ${back}"
+                else -> "CAM ${cameras.size}"
             }
-        )
+        }
+        // Start on the default back camera if present.
+        cameraIndex = cameras.indexOfFirst {
+            runCatching { provider.hasCamera(it) }.getOrDefault(false) &&
+                cameraLabels[cameras.indexOf(it)] == "BACK"
+        }.takeIf { it >= 0 } ?: 0
+        lensSelector = cameras.getOrElse(cameraIndex) { CameraSelector.DEFAULT_BACK_CAMERA }
+    }
+
+    /**
+     * (Re)bind preview + capture for the current lens, aspect ratio, and RAW
+     * setting. Every control path (initial bind, camera switch, aspect change,
+     * RAW toggle) funnels through here so the session is always consistent.
+     * Must run on the main thread.
+     */
+    private fun rebind(): CameraCaps {
+        val provider = provider ?: error("Camera not initialised")
+        val owner = owner ?: error("Camera not initialised")
+        val previewBuilder = Preview.Builder().setTargetAspectRatio(aspect.cameraXRatio)
+        Camera2Interop.Extender(previewBuilder).setSessionCaptureCallback(meteredCallback)
         val preview = previewBuilder.build().also { it.surfaceProvider = surfaceProvider }
         val capture = buildCapture()
 
         provider.unbindAll()
-        val cam = provider.bindToLifecycle(owner, CameraSelector.DEFAULT_BACK_CAMERA, preview, capture)
+        val cam = provider.bindToLifecycle(owner, lensSelector, preview, capture)
         camera = cam
         imageCapture = capture
-        this.provider = provider
-        this.owner = owner
+
         val formats = runCatching {
             ImageCapture.getImageCaptureCapabilities(cam.cameraInfo).supportedOutputFormats
         }.getOrDefault(emptySet())
         rawSupported = formats.contains(ImageCapture.OUTPUT_FORMAT_RAW_JPEG)
         rawOnlySupported = formats.contains(ImageCapture.OUTPUT_FORMAT_RAW)
+        if (!rawSupported) rawEnabled = false
+        applyControls()
         return readCaps(cam)
     }
 
-    /**
-     * Toggle DNG capture. The output format is fixed at use-case creation, so
-     * this swaps the ImageCapture use case in place (preview stays bound).
-     */
+    /** Cycle to the next available camera; returns the new capabilities. */
+    fun switchCamera(): CameraCaps {
+        val cam = camera ?: error("Camera not bound")
+        if (cameras.size <= 1) return readCaps(cam)
+        cameraIndex = (cameraIndex + 1) % cameras.size
+        lensSelector = cameras[cameraIndex]
+        return rebind()
+    }
+
+    /** Change the capture aspect ratio; returns the (unchanged) capabilities. */
+    fun setAspectRatio(mode: AspectRatioMode): CameraCaps {
+        val cam = camera ?: error("Camera not bound")
+        if (mode == aspect) return readCaps(cam)
+        aspect = mode
+        return rebind()
+    }
+
+    /** Toggle DNG capture (rebinds — the output format is fixed at use-case creation). */
     fun setRawEnabled(enabled: Boolean) {
         val want = enabled && rawSupported
         if (want == rawEnabled) return
         rawEnabled = want
-        val provider = provider ?: return
-        val owner = owner ?: return
-        imageCapture?.let { provider.unbind(it) }
-        val capture = buildCapture()
-        provider.bindToLifecycle(owner, CameraSelector.DEFAULT_BACK_CAMERA, capture)
-        imageCapture = capture
-        applyControls()
+        if (provider != null && owner != null) rebind()
     }
 
     private fun buildCapture(): ImageCapture {
         val builder = ImageCapture.Builder()
+            // Shutter latency matters more than the last bit of quality for a
+            // handheld film-sim camera; the graph re-renders afterward anyway.
+            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+            .setTargetAspectRatio(aspect.cameraXRatio)
         if (rawEnabled) builder.setOutputFormat(ImageCapture.OUTPUT_FORMAT_RAW_JPEG)
         return builder.build()
     }
@@ -197,14 +260,11 @@ class CameraController(private val context: Context) {
         val rawCapture = ImageCapture.Builder()
             .setOutputFormat(ImageCapture.OUTPUT_FORMAT_RAW)
             .build()
-        provider.bindToLifecycle(owner, CameraSelector.DEFAULT_BACK_CAMERA, rawCapture)
+        provider.bindToLifecycle(owner, lensSelector, rawCapture)
         applyControls()
         fun restore() {
             provider.unbind(rawCapture)
-            val capture = buildCapture()
-            provider.bindToLifecycle(owner, CameraSelector.DEFAULT_BACK_CAMERA, capture)
-            imageCapture = capture
-            applyControls()
+            rebind()
         }
         rawCapture.takePicture(
             ContextCompat.getMainExecutor(context),

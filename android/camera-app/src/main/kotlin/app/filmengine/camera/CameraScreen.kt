@@ -4,6 +4,8 @@ import android.graphics.Bitmap
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.widget.Toast
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -12,18 +14,26 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -49,6 +59,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
+import app.filmengine.camera.core.AspectRatioMode
 import app.filmengine.camera.core.ExposureMode
 import app.filmengine.camera.core.QualityLevel
 import app.filmengine.film.BuiltinStocks
@@ -87,6 +98,11 @@ fun CameraScreen(onOpenEditor: () -> Unit = {}, vm: CameraViewModel = hiltViewMo
     val zebra by vm.zebra.collectAsState()
     val peaking by vm.peaking.collectAsState()
     val calMode by vm.calMode.collectAsState()
+    val aspect by vm.aspect.collectAsState()
+    val cameraLabel by vm.cameraLabel.collectAsState()
+    val canSwitchCamera by vm.canSwitchCamera.collectAsState()
+    val capturing by vm.capturing.collectAsState()
+    val flashTick by vm.flashTick.collectAsState()
 
     var activeControl by remember { mutableStateOf<ActiveControl?>(null) }
     var stocksVisible by remember { mutableStateOf(true) }
@@ -96,10 +112,22 @@ fun CameraScreen(onOpenEditor: () -> Unit = {}, vm: CameraViewModel = hiltViewMo
         onDispose { vm.stopPipeline() }
     }
 
+    // Brief white flash as shutter feedback — snaps to full alpha, fades over 220ms.
+    val flashAlpha = remember { Animatable(0f) }
+    LaunchedEffect(flashTick) {
+        if (flashTick > 0) {
+            flashAlpha.snapTo(1f)
+            flashAlpha.animateTo(0f, tween(220))
+        }
+    }
+
     Column(Modifier.fillMaxSize().background(Color.Black)) {
         // ── top bar ─────────────────────────────────────────────────────
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+            Modifier
+                .fillMaxWidth()
+                .windowInsetsPadding(WindowInsets.statusBars)
+                .padding(horizontal = 16.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
@@ -121,6 +149,7 @@ fun CameraScreen(onOpenEditor: () -> Unit = {}, vm: CameraViewModel = hiltViewMo
                 ) { vm.cycleScopeMode() }
                 TopToggle("ZEBRA", zebra) { vm.setZebra(!zebra) }
                 TopToggle("PEAK", peaking) { vm.setPeaking(!peaking) }
+                TopToggle(aspect.label, on = true) { vm.cycleAspect() }
                 if (caps?.rawSupported == true) {
                     TopToggle("RAW", rawEnabled) { vm.setRaw(!rawEnabled) }
                     TopToggle(calMode.label, calMode != CalMode.OFF) { vm.cycleCalMode() }
@@ -129,31 +158,45 @@ fun CameraScreen(onOpenEditor: () -> Unit = {}, vm: CameraViewModel = hiltViewMo
         }
 
         // ── viewfinder ──────────────────────────────────────────────────
-        Box(Modifier.fillMaxWidth().weight(1f)) {
-            AndroidView(
-                modifier = Modifier.fillMaxSize(),
-                factory = { ctx ->
-                    SurfaceView(ctx).also { sv ->
-                        sv.holder.addCallback(object : SurfaceHolder.Callback {
-                            override fun surfaceCreated(holder: SurfaceHolder) {
-                                val r = holder.surfaceFrame
-                                vm.startPipeline(holder.surface, r.width(), r.height())
-                            }
-                            override fun surfaceChanged(holder: SurfaceHolder, fmt: Int, w: Int, h: Int) {
-                                vm.onSurfaceChanged(w, h)
-                            }
-                            override fun surfaceDestroyed(holder: SurfaceHolder) {
-                                vm.stopPipeline()
-                            }
-                        })
+        Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+            Box(Modifier.fillMaxSize().aspectRatio(aspect.displayRatio)) {
+                AndroidView(
+                    modifier = Modifier.fillMaxSize(),
+                    factory = { ctx ->
+                        SurfaceView(ctx).also { sv ->
+                            sv.holder.addCallback(object : SurfaceHolder.Callback {
+                                override fun surfaceCreated(holder: SurfaceHolder) {
+                                    val r = holder.surfaceFrame
+                                    vm.startPipeline(holder.surface, r.width(), r.height())
+                                }
+                                override fun surfaceChanged(holder: SurfaceHolder, fmt: Int, w: Int, h: Int) {
+                                    vm.onSurfaceChanged(w, h)
+                                }
+                                override fun surfaceDestroyed(holder: SurfaceHolder) {
+                                    vm.stopPipeline()
+                                }
+                            })
+                        }
+                    },
+                )
+                GridOverlay()
+                scopeData?.let { data ->
+                    if (scopeMode != ScopeMode.OFF) {
+                        ScopeOverlay(data, scopeMode, Modifier.align(Alignment.TopEnd).padding(12.dp))
                     }
-                },
-            )
-            GridOverlay()
-            scopeData?.let { data ->
-                if (scopeMode != ScopeMode.OFF) {
-                    ScopeOverlay(data, scopeMode, Modifier.align(Alignment.TopEnd).padding(12.dp))
                 }
+                if (canSwitchCamera) {
+                    Column(
+                        Modifier.align(Alignment.TopStart).padding(12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        RoundButton("🔄", onClick = vm::switchCamera)
+                        Text(cameraLabel, color = DimText, fontSize = 9.sp)
+                    }
+                }
+            }
+            if (flashAlpha.value > 0f) {
+                Box(Modifier.fillMaxSize().background(Color.White.copy(alpha = flashAlpha.value)))
             }
         }
 
@@ -282,26 +325,34 @@ fun CameraScreen(onOpenEditor: () -> Unit = {}, vm: CameraViewModel = hiltViewMo
 
         // ── bottom row: editor · shutter · stocks toggle ───────────────
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 14.dp),
+            Modifier
+                .fillMaxWidth()
+                .windowInsetsPadding(WindowInsets.navigationBars)
+                .padding(horizontal = 32.dp, vertical = 14.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
             RoundButton("🧪", onClick = onOpenEditor)
-            Box(
-                Modifier
-                    .size(76.dp)
-                    .border(4.dp, Color.White, CircleShape)
-                    .padding(8.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFF141414))
-                    .clickable {
-                        val onDone = { _: Boolean, message: String ->
-                            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
-                        }
-                        if (calMode != CalMode.OFF) vm.captureCalibration(onDone)
-                        else vm.takePhoto(onDone)
-                    },
-            )
+            Box(Modifier.size(76.dp), contentAlignment = Alignment.Center) {
+                Box(
+                    Modifier
+                        .size(76.dp)
+                        .border(4.dp, Color.White, CircleShape)
+                        .padding(8.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFF141414))
+                        .clickable(enabled = !capturing) {
+                            val onDone = { _: Boolean, message: String ->
+                                Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                            }
+                            if (calMode != CalMode.OFF) vm.captureCalibration(onDone)
+                            else vm.takePhoto(onDone)
+                        },
+                )
+                if (capturing) {
+                    CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(40.dp))
+                }
+            }
             RoundButton("🎞️", on = stocksVisible, onClick = { stocksVisible = !stocksVisible })
         }
     }
