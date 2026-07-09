@@ -74,14 +74,21 @@ class PreviewRenderer(
      * Render one frame of the engine pipeline and present it to the window surface
      * (FBO 0). The caller must have made the window EGL surface current before
      * calling this, and must call `eglSwapBuffers` after.
+     *
+     * [zebra] stripes clipped highlights and [peaking] outlines in-focus edges;
+     * both are overlays applied at blit time only — the returned texture (the
+     * final pipeline output, `0` if not yet sized) is always clean, so scope
+     * readouts never see the overlay pixels.
      */
     fun renderFrame(
         plan: ExecutionPlan,
         oesTextureId: Int,
         oesTransform: FloatArray,
-    ) {
-        val t = textures ?: return
-        val f = fbos ?: return
+        zebra: Boolean = false,
+        peaking: Boolean = false,
+    ): Int {
+        val t = textures ?: return 0
+        val f = fbos ?: return 0
 
         glViewport(0, 0, width, height)
         glBindVertexArray(vao)
@@ -137,7 +144,11 @@ class PreviewRenderer(
         glActiveTexture(GL_TEXTURE0)
         glBindTexture(GL_TEXTURE_2D, t[cur])
         glUniform1i(glGetUniformLocation(blitProgram, "src"), 0)
+        glUniform1i(glGetUniformLocation(blitProgram, "zebra"), if (zebra) 1 else 0)
+        glUniform1i(glGetUniformLocation(blitProgram, "peaking"), if (peaking) 1 else 0)
+        glUniform2f(glGetUniformLocation(blitProgram, "texelSize"), 1f / width, 1f / height)
         glDrawArrays(GL_TRIANGLES, 0, 3)
+        return t[cur]
     }
 
     /** Release all GPU resources. Safe to call multiple times. */
@@ -208,15 +219,44 @@ class PreviewRenderer(
         private const val GL_RGBA32F = 0x8814
         private const val GL_RGBA16F = 0x881A
 
-        /** Simple blit shader — samples src and writes directly. */
+        /**
+         * Blit shader with optional viewfinder aids (B6):
+         *  - zebra: diagonal stripes where any channel clips (≥ 0.98)
+         *  - focus peaking: red edge overlay from a luma Laplacian
+         *
+         * Luma weights are Rec.709/sRGB — the blit input is display-referred.
+         */
+        // ponytail: peaking is measured on the processed output, so heavy grain
+        // can add false edges; a dedicated pre-film-sim tap if it bothers.
         private val BLIT_FRAGMENT = """
             #version 300 es
             precision highp float;
             in vec2 uv;
             out vec4 fragColor;
             uniform sampler2D src;
+            uniform vec2 texelSize;
+            uniform int zebra;
+            uniform int peaking;
+
+            const vec3 LUMA = vec3(0.2126, 0.7152, 0.0722);
+
             void main() {
-                fragColor = texture(src, uv);
+                vec4 c = texture(src, uv);
+                if (peaking == 1) {
+                    float l = dot(c.rgb, LUMA);
+                    float lap = abs(
+                        dot(texture(src, uv + vec2(texelSize.x, 0.0)).rgb, LUMA) +
+                        dot(texture(src, uv - vec2(texelSize.x, 0.0)).rgb, LUMA) +
+                        dot(texture(src, uv + vec2(0.0, texelSize.y)).rgb, LUMA) +
+                        dot(texture(src, uv - vec2(0.0, texelSize.y)).rgb, LUMA) -
+                        4.0 * l);
+                    if (lap > 0.08) c.rgb = mix(c.rgb, vec3(1.0, 0.25, 0.2), 0.9);
+                }
+                if (zebra == 1 && max(max(c.r, c.g), c.b) >= 0.98) {
+                    float stripe = step(4.0, mod(gl_FragCoord.x + gl_FragCoord.y, 8.0));
+                    c.rgb = mix(vec3(0.05), vec3(0.95), stripe);
+                }
+                fragColor = c;
             }
         """.trimIndent()
     }

@@ -11,6 +11,8 @@ import androidx.camera.core.Preview
 import app.filmengine.engine.exec.ExecutionPlan
 import app.filmengine.render.gles.GlesContext
 import app.filmengine.render.gles.PreviewRenderer
+import app.filmengine.render.gles.ScopeData
+import app.filmengine.render.gles.ScopeRenderer
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -39,6 +41,16 @@ class PreviewPipeline {
     private val _qualityLevel = MutableStateFlow(QualityLevel.FULL)
     val qualityLevel: StateFlow<QualityLevel> = _qualityLevel
 
+    /** Latest scope readback; null while scopes are off or unavailable. */
+    private val _scopeData = MutableStateFlow<ScopeData?>(null)
+    val scopeData: StateFlow<ScopeData?> = _scopeData
+
+    // Viewfinder-aid toggles: written from the UI thread, read per-frame on
+    // the GL thread — @Volatile is the whole synchronization story.
+    @Volatile private var scopesOn = false
+    @Volatile private var zebraOn = false
+    @Volatile private var peakingOn = false
+
     // ── GL-thread-only state ────────────────────────────────────────────────
     private var glThread: HandlerThread? = null
     private var glHandler: Handler? = null
@@ -49,7 +61,9 @@ class PreviewPipeline {
     private val oesTransform = FloatArray(16)
 
     private var renderer: PreviewRenderer? = null
+    private var scopeRenderer: ScopeRenderer? = null
     private val perfMonitor = PerfMonitor()
+    private var frameIndex = 0L
 
     private var currentStockId: String? = null
     private var currentPlan: ExecutionPlan? = null
@@ -83,6 +97,7 @@ class PreviewPipeline {
             GlesContext.makeCurrentTo(eglSurface!!)
 
             renderer = PreviewRenderer().also { it.resize(width, height) }
+            scopeRenderer = ScopeRenderer()
 
             // ── camera OES texture ──────────────────────────────────────
             val texIds = IntArray(1)
@@ -143,6 +158,22 @@ class PreviewPipeline {
         }
     }
 
+    /** Enable/disable the histogram+waveform compute pass. */
+    fun setScopes(enabled: Boolean) {
+        scopesOn = enabled
+        if (!enabled) _scopeData.value = null
+    }
+
+    /** Zebra stripes on clipped highlights (blit-time overlay). */
+    fun setZebra(enabled: Boolean) {
+        zebraOn = enabled
+    }
+
+    /** Focus-peaking edge overlay (blit-time overlay). */
+    fun setPeaking(enabled: Boolean) {
+        peakingOn = enabled
+    }
+
     /** Tear down the pipeline and release all resources. */
     fun stop() {
         glHandler?.post {
@@ -156,6 +187,9 @@ class PreviewPipeline {
 
             renderer?.release()
             renderer = null
+
+            scopeRenderer?.release()
+            scopeRenderer = null
 
             eglSurface?.let {
                 GlesContext.makeCurrent()   // switch to pbuffer before destroying window surface
@@ -184,7 +218,13 @@ class PreviewPipeline {
         st.getTransformMatrix(oesTransform)
 
         GlesContext.makeCurrentTo(surface)
-        r.renderFrame(plan, cameraOesTexId, oesTransform)
+        val finalTex = r.renderFrame(plan, cameraOesTexId, oesTransform, zebraOn, peakingOn)
+        // Scope collection runs before the swap so its cost lands inside the
+        // measured frame — the PerfMonitor ladder is what throttles it.
+        if (ScopeGate.shouldCollect(frameIndex++, scopesOn, perfMonitor.currentLevel)) {
+            scopeRenderer?.collect(finalTex, surfaceWidth, surfaceHeight)
+                ?.let { _scopeData.value = it }
+        }
         GlesContext.swapBuffers(surface)
 
         val frameMs = (System.nanoTime() - t0) / 1_000_000f

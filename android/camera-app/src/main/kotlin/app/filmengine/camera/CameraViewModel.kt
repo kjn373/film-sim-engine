@@ -12,12 +12,15 @@ import app.filmengine.camera.core.ExposureSettings
 import app.filmengine.camera.core.ExposureSolver
 import app.filmengine.camera.core.PreviewPipeline
 import app.filmengine.camera.core.QualityLevel
+import app.filmengine.render.gles.ScopeData
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+
+enum class ScopeMode { OFF, HISTOGRAM, WAVEFORM }
 
 data class ExposureUi(
     val mode: ExposureMode = ExposureMode.AUTO,
@@ -45,6 +48,19 @@ class CameraViewModel @Inject constructor(
 
     private val _rawEnabled = MutableStateFlow(false)
     val rawEnabled: StateFlow<Boolean> = _rawEnabled
+
+    // ── viewfinder aids (B6) ────────────────────────────────────────────────
+    private val _scopeMode = MutableStateFlow(ScopeMode.OFF)
+    val scopeMode: StateFlow<ScopeMode> = _scopeMode
+
+    private val _zebra = MutableStateFlow(false)
+    val zebra: StateFlow<Boolean> = _zebra
+
+    private val _peaking = MutableStateFlow(false)
+    val peaking: StateFlow<Boolean> = _peaking
+
+    /** Latest histogram/waveform readback from the GL thread. */
+    val scopeData: StateFlow<ScopeData?> = pipeline.scopeData
 
     /** Frame time from the pipeline (ms). */
     val frameTimeMs: StateFlow<Float> = pipeline.frameTimeMs
@@ -114,6 +130,22 @@ class CameraViewModel @Inject constructor(
     fun setEc(stops: Float) {
         ecStops = stops
         recompute()
+    }
+
+    fun cycleScopeMode() {
+        val next = ScopeMode.entries[(_scopeMode.value.ordinal + 1) % ScopeMode.entries.size]
+        _scopeMode.value = next
+        pipeline.setScopes(next != ScopeMode.OFF)
+    }
+
+    fun setZebra(enabled: Boolean) {
+        _zebra.value = enabled
+        pipeline.setZebra(enabled)
+    }
+
+    fun setPeaking(enabled: Boolean) {
+        _peaking.value = enabled
+        pipeline.setPeaking(enabled)
     }
 
     fun setRaw(enabled: Boolean) {

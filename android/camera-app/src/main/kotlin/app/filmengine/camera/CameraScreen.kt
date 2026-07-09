@@ -1,8 +1,10 @@
 package app.filmengine.camera
 
+import android.graphics.Bitmap
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.widget.Toast
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -26,9 +28,17 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -36,6 +46,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import app.filmengine.camera.core.ExposureMode
 import app.filmengine.camera.core.QualityLevel
 import app.filmengine.film.BuiltinStocks
+import app.filmengine.render.gles.ScopeData
 import kotlin.math.ln
 import kotlin.math.pow
 import kotlin.math.roundToInt
@@ -61,6 +72,10 @@ fun CameraScreen(vm: CameraViewModel = hiltViewModel()) {
     val rawEnabled by vm.rawEnabled.collectAsState()
     val frameTime by vm.frameTimeMs.collectAsState()
     val quality by vm.qualityLevel.collectAsState()
+    val scopeMode by vm.scopeMode.collectAsState()
+    val scopeData by vm.scopeData.collectAsState()
+    val zebra by vm.zebra.collectAsState()
+    val peaking by vm.peaking.collectAsState()
 
     // Bind camera once; pipeline lifecycle managed via SurfaceHolder callbacks.
     DisposableEffect(lifecycleOwner) {
@@ -113,6 +128,19 @@ fun CameraScreen(vm: CameraViewModel = hiltViewModel()) {
             }
         }
 
+        // ── Scope overlay (top-right) ───────────────────────────────────
+        scopeData?.let { data ->
+            if (scopeMode != ScopeMode.OFF) {
+                ScopeOverlay(
+                    data = data,
+                    mode = scopeMode,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(12.dp),
+                )
+            }
+        }
+
         // ── Controls overlay (bottom) ───────────────────────────────────
         Column(
             Modifier
@@ -154,6 +182,32 @@ fun CameraScreen(vm: CameraViewModel = hiltViewModel()) {
                         modifier = Modifier.padding(end = 6.dp),
                     )
                 }
+                FilterChip(
+                    selected = scopeMode != ScopeMode.OFF,
+                    onClick = { vm.cycleScopeMode() },
+                    label = {
+                        Text(
+                            when (scopeMode) {
+                                ScopeMode.OFF -> "Scope"
+                                ScopeMode.HISTOGRAM -> "Hist"
+                                ScopeMode.WAVEFORM -> "Wave"
+                            }
+                        )
+                    },
+                    modifier = Modifier.padding(end = 6.dp),
+                )
+                FilterChip(
+                    selected = zebra,
+                    onClick = { vm.setZebra(!zebra) },
+                    label = { Text("Zebra") },
+                    modifier = Modifier.padding(end = 6.dp),
+                )
+                FilterChip(
+                    selected = peaking,
+                    onClick = { vm.setPeaking(!peaking) },
+                    label = { Text("Peak") },
+                    modifier = Modifier.padding(end = 6.dp),
+                )
             }
 
             // Manual sliders (log-scaled)
@@ -213,6 +267,74 @@ fun CameraScreen(vm: CameraViewModel = hiltViewModel()) {
             ) {}
         }
     }
+}
+
+/**
+ * Histogram / waveform panel drawn from the latest [ScopeData] readback.
+ * Histogram: R/G/B channel bars (additive alpha) + white luma outline.
+ * Waveform: heat bitmap, rows flipped so white is at the top.
+ */
+@Composable
+private fun ScopeOverlay(data: ScopeData, mode: ScopeMode, modifier: Modifier = Modifier) {
+    Canvas(
+        modifier
+            .size(180.dp, 100.dp)
+            .background(Color.Black.copy(alpha = 0.55f))
+            .padding(4.dp),
+    ) {
+        when (mode) {
+            ScopeMode.HISTOGRAM -> {
+                val max = maxOf(
+                    data.red.max(), data.green.max(), data.blue.max(), 1,
+                )
+                drawHistogram(data.red, Color(0xFFFF5252), max)
+                drawHistogram(data.green, Color(0xFF69F0AE), max)
+                drawHistogram(data.blue, Color(0xFF448AFF), max)
+                drawHistogram(data.luma, Color.White, maxOf(data.luma.max(), 1), alpha = 0.9f)
+            }
+            ScopeMode.WAVEFORM -> drawImage(
+                image = waveformBitmap(data),
+                dstOffset = IntOffset.Zero,
+                dstSize = IntSize(size.width.toInt(), size.height.toInt()),
+                srcSize = IntSize(ScopeData.WAVE_W, ScopeData.WAVE_H),
+                filterQuality = FilterQuality.Low,
+            )
+            ScopeMode.OFF -> Unit
+        }
+    }
+}
+
+private fun DrawScope.drawHistogram(bins: IntArray, color: Color, max: Int, alpha: Float = 0.55f) {
+    val bw = size.width / bins.size
+    for (i in bins.indices) {
+        if (bins[i] == 0) continue
+        val h = bins[i].toFloat() / max * size.height
+        drawRect(
+            color = color,
+            topLeft = Offset(i * bw, size.height - h),
+            size = Size(bw, h),
+            alpha = alpha,
+        )
+    }
+}
+
+// ponytail: one small Bitmap alloc per scope readback (≤15 Hz); reuse a
+// mutable Bitmap if the Allocation Tracker ever flags it.
+private fun waveformBitmap(data: ScopeData): ImageBitmap {
+    val w = ScopeData.WAVE_W
+    val h = ScopeData.WAVE_H
+    val max = maxOf(data.waveform.max(), 1)
+    val logMax = ln(1f + max)
+    val px = IntArray(w * h)
+    for (i in data.waveform.indices) {
+        val v = data.waveform[i]
+        if (v == 0) continue
+        val intensity = (ln(1f + v) / logMax * 255f).roundToInt().coerceIn(0, 255)
+        // row 0 = black level → draw at the bottom
+        val y = h - 1 - i / w
+        px[y * w + i % w] = (intensity shl 24) or 0x69F0AE
+    }
+    return Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888).asImageBitmap()
 }
 
 /** Slider that maps position 0..1 exponentially onto [min, max]. */
