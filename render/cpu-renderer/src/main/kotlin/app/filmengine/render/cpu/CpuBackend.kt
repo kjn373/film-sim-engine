@@ -96,6 +96,32 @@ object BuiltinCpuKernels {
         }
     }
 
+    /** Desaturate toward the channel mean as max(r,g,b) approaches clip (A5b). */
+    val highlightReconstruction = CpuKernel { src, step ->
+        val t = step.params.getValue("threshold")
+        val s = step.params.getValue("strength")
+        pointwise(src) { px ->
+            val m = kotlin.math.max(px[0], kotlin.math.max(px[1], px[2]))
+            val k = ((m - t) / (1f - t)).coerceIn(0f, 1f)
+            val w = k * k * (3f - 2f * k) * s // smoothstep, mirrored in GLSL
+            val mean = (px[0] + px[1] + px[2]) / 3f
+            for (i in 0..2) px[i] += (mean - px[i]) * w
+        }
+    }
+
+    /** Multiplicative shadow gain 1 + amount*range/(range+luma) — black stays black (A5b). */
+    val shadowLift = CpuKernel { src, step ->
+        val amt = step.params.getValue("amount")
+        val range = step.params.getValue("range")
+        pointwise(src) { px ->
+            val luma = kotlin.math.max(
+                ColorSpaces.LUMA_R * px[0] + ColorSpaces.LUMA_G * px[1] + ColorSpaces.LUMA_B * px[2], 0f
+            )
+            val gain = 1f + amt * range / (range + luma)
+            for (i in 0..2) px[i] *= gain
+        }
+    }
+
     /** Linear Rec.2020 working space -> encoded sRGB, clamped to [0,1]. */
     val srgbOutput = CpuKernel { src, _ ->
         pointwise(src) { px ->
@@ -111,6 +137,8 @@ object BuiltinCpuKernels {
         "tone_curve" to toneCurve,
         "tone_map" to toneMap,
         "saturation" to saturation,
+        "highlight_reconstruction" to highlightReconstruction,
+        "shadow_lift" to shadowLift,
         "srgb_output" to srgbOutput,
         "gaussian_blur" to SpatialCpuKernels.gaussianBlur,
         "bloom" to SpatialCpuKernels.bloom,

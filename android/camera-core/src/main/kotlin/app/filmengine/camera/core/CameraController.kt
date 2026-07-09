@@ -56,6 +56,7 @@ class CameraController(private val context: Context) {
     private var provider: ProcessCameraProvider? = null
     private var owner: LifecycleOwner? = null
     private var rawSupported = false
+    private var rawOnlySupported = false
     private var rawEnabled = false
 
     // Composed control state
@@ -91,10 +92,11 @@ class CameraController(private val context: Context) {
         imageCapture = capture
         this.provider = provider
         this.owner = owner
-        rawSupported = runCatching {
-            ImageCapture.getImageCaptureCapabilities(cam.cameraInfo)
-                .supportedOutputFormats.contains(ImageCapture.OUTPUT_FORMAT_RAW_JPEG)
-        }.getOrDefault(false)
+        val formats = runCatching {
+            ImageCapture.getImageCaptureCapabilities(cam.cameraInfo).supportedOutputFormats
+        }.getOrDefault(emptySet())
+        rawSupported = formats.contains(ImageCapture.OUTPUT_FORMAT_RAW_JPEG)
+        rawOnlySupported = formats.contains(ImageCapture.OUTPUT_FORMAT_RAW)
         return readCaps(cam)
     }
 
@@ -175,6 +177,101 @@ class CameraController(private val context: Context) {
         } else {
             capture.takePicture(mediaStoreOutput(name, "image/jpeg"), executor, callback)
         }
+    }
+
+    // ── calibration (B7) ────────────────────────────────────────────────────
+
+    private fun <T> characteristic(key: CameraCharacteristics.Key<T>): T? =
+        camera?.let { Camera2CameraInfo.from(it.cameraInfo).getCameraCharacteristic(key) }
+
+    /**
+     * One in-memory RAW_SENSOR frame for calibration. The RAW-only ImageCapture
+     * use case is swapped in just for this shot and the normal one restored after —
+     * heavy, but calibration shots are rare. Caller owns (and must close) the image.
+     */
+    fun captureCalibrationRaw(onResult: (androidx.camera.core.ImageProxy?, String) -> Unit) {
+        val provider = provider ?: return onResult(null, "Camera not bound")
+        val owner = owner ?: return onResult(null, "Camera not bound")
+        if (!rawOnlySupported) return onResult(null, "RAW capture not supported")
+        imageCapture?.let { provider.unbind(it) }
+        val rawCapture = ImageCapture.Builder()
+            .setOutputFormat(ImageCapture.OUTPUT_FORMAT_RAW)
+            .build()
+        provider.bindToLifecycle(owner, CameraSelector.DEFAULT_BACK_CAMERA, rawCapture)
+        applyControls()
+        fun restore() {
+            provider.unbind(rawCapture)
+            val capture = buildCapture()
+            provider.bindToLifecycle(owner, CameraSelector.DEFAULT_BACK_CAMERA, capture)
+            imageCapture = capture
+            applyControls()
+        }
+        rawCapture.takePicture(
+            ContextCompat.getMainExecutor(context),
+            object : ImageCapture.OnImageCapturedCallback() {
+                override fun onCaptureSuccess(image: androidx.camera.core.ImageProxy) {
+                    restore()
+                    onResult(image, "ok")
+                }
+
+                override fun onError(e: ImageCaptureException) {
+                    restore()
+                    onResult(null, "Calibration capture failed: ${e.message}")
+                }
+            },
+        )
+    }
+
+    /** Bayer statistics for a calibration frame — [CalibrationStats] over the RAW16 plane. */
+    fun calibrationStats(
+        image: androidx.camera.core.ImageProxy,
+        kind: String,
+        iso: Int,
+        exposureNs: Long,
+        cct: Float,
+    ): app.filmengine.profile.FrameStats {
+        val plane = image.planes[0]
+        val buf = plane.buffer.order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        val rowStride = plane.rowStride
+        val pixelStride = plane.pixelStride
+        val cfa = characteristic(CameraCharacteristics.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT) ?: 0
+        return CalibrationStats.compute(kind, iso, exposureNs, cct, image.width, image.height, cfa) { x, y ->
+            buf.getShort(y * rowStride + x * pixelStride).toInt() and 0xFFFF
+        }
+    }
+
+    /** §16 fallback profile straight from Camera2 static metadata. Null before bind. */
+    fun harvestProfile(): app.filmengine.profile.DeviceProfile? {
+        val cam = camera ?: return null
+        val info = Camera2CameraInfo.from(cam.cameraInfo)
+        val white = characteristic(CameraCharacteristics.SENSOR_INFO_WHITE_LEVEL) ?: return null
+        val black = characteristic(CameraCharacteristics.SENSOR_BLACK_LEVEL_PATTERN)
+            ?.let { p -> (0..3).map { p.getOffsetForIndex(it % 2, it / 2) }.average().toFloat() } ?: 0f
+        fun mat(t: android.hardware.camera2.params.ColorSpaceTransform?): FloatArray? =
+            t?.let { FloatArray(9) { i -> it.getElement(i % 3, i / 3).toFloat() } }
+        return DeviceProfiles.harvest(
+            model = android.os.Build.MODEL,
+            sensorId = info.cameraId,
+            whiteLevel = white.toFloat(),
+            blackLevel = black,
+            illuminant1Code = characteristic(CameraCharacteristics.SENSOR_REFERENCE_ILLUMINANT1) ?: 21,
+            illuminant2Code = characteristic(CameraCharacteristics.SENSOR_REFERENCE_ILLUMINANT2)?.toInt() ?: 17,
+            xyzToCam1 = mat(characteristic(CameraCharacteristics.SENSOR_COLOR_TRANSFORM1)),
+            xyzToCam2 = mat(characteristic(CameraCharacteristics.SENSOR_COLOR_TRANSFORM2)),
+        )
+    }
+
+    /**
+     * §16 runtime lookup: a calibrated profile dropped in the app's external
+     * files dir (profile-calibrator output, e.g. via adb push) wins; otherwise
+     * fall back to the harvested one.
+     */
+    fun loadProfile(): app.filmengine.profile.DeviceProfile? {
+        val f = java.io.File(context.getExternalFilesDir(null), "deviceprofile.json")
+        if (f.exists()) {
+            runCatching { return app.filmengine.profile.DeviceProfileCodec.decode(f.readText()) }
+        }
+        return harvestProfile()
     }
 
     private fun mediaStoreOutput(name: String, mimeType: String): ImageCapture.OutputFileOptions {

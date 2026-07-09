@@ -27,6 +27,8 @@ dependencies {
     api("androidx.camera:camera-camera2:$camerax")
     api("androidx.camera:camera-lifecycle:$camerax")
     api(project(":android:gles-renderer"))
+    // DeviceProfile schema + FrameStats wire format (B7)
+    api(project(":tooling:profile-calibrator"))
     implementation(project(":core:film-engine"))
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 

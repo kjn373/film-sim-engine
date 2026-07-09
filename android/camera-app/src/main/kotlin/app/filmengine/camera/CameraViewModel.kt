@@ -22,6 +22,19 @@ import javax.inject.Inject
 
 enum class ScopeMode { OFF, HISTOGRAM, WAVEFORM }
 
+/**
+ * Calibration capture mode (B7). Each non-OFF mode tags the next shutter press
+ * as one calibration frame kind; chart modes carry the illuminant CCT the
+ * calibrator's dual-illuminant solve needs.
+ */
+enum class CalMode(val label: String, val kind: String?, val cct: Float) {
+    OFF("CAL", null, 0f),
+    DARK("DARK", "dark", 6504f),
+    CHART_DAY("CHART☀", "chart", 6504f),
+    CHART_TUNGSTEN("CHART💡", "chart", 2856f),
+    FLAT("FLAT", "flat", 6504f),
+}
+
 data class ExposureUi(
     val mode: ExposureMode = ExposureMode.AUTO,
     val iso: Int = 0,
@@ -152,6 +165,69 @@ class CameraViewModel @Inject constructor(
         val effective = enabled && _caps.value?.rawSupported == true
         controller.setRawEnabled(effective)
         _rawEnabled.value = effective
+    }
+
+    // ── calibration capture (B7) ────────────────────────────────────────────
+    private val _calMode = MutableStateFlow(CalMode.OFF)
+    val calMode: StateFlow<CalMode> = _calMode
+
+    fun cycleCalMode() {
+        _calMode.value = CalMode.entries[(_calMode.value.ordinal + 1) % CalMode.entries.size]
+    }
+
+    /**
+     * One in-memory RAW frame → Bayer stats → appended to
+     * `calibration_report.json` in the app's external files dir. Pull the report
+     * with adb and run `tooling/profile-calibrator` on it to get the profile.
+     */
+    fun captureCalibration(onResult: (Boolean, String) -> Unit) {
+        val mode = _calMode.value
+        val kind = mode.kind ?: return
+        val iso = _ui.value.iso.takeIf { it > 0 } ?: 400
+        val shutterNs = _ui.value.shutterNs.takeIf { it > 0 } ?: 16_666_666L
+        controller.captureCalibrationRaw { image, message ->
+            if (image == null) return@captureCalibrationRaw onResult(false, message)
+            viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+                val result = runCatching {
+                    val stats = try {
+                        controller.calibrationStats(image, kind, iso, shutterNs, mode.cct)
+                    } finally {
+                        image.close()
+                    }
+                    appendToReport(stats)
+                }
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    result.fold(
+                        { n -> onResult(true, "${mode.label} frame #$n · ISO $iso") },
+                        { e -> onResult(false, "Calibration failed: ${e.message}") },
+                    )
+                }
+            }
+        }
+    }
+
+    private fun appendToReport(frame: app.filmengine.profile.FrameStats): Int {
+        val dir = appContext.getExternalFilesDir(null)
+        val file = java.io.File(dir, "calibration_report.json")
+        val report = if (file.exists()) {
+            app.filmengine.profile.CalibrationReportCodec.decode(file.readText())
+        } else {
+            val harvested = controller.harvestProfile()
+            // drop the §16 harvested fallback next to the report for comparison
+            harvested?.let {
+                java.io.File(dir, "deviceprofile_harvested.json")
+                    .writeText(app.filmengine.profile.DeviceProfileCodec.encode(it))
+            }
+            app.filmengine.profile.CalibrationReport(
+                model = android.os.Build.MODEL,
+                sensorId = harvested?.sensorId ?: "0",
+                whiteLevel = harvested?.sensor?.whiteLevel ?: 1023f,
+                frames = emptyList(),
+            )
+        }
+        val updated = report.copy(frames = report.frames + frame)
+        file.writeText(app.filmengine.profile.CalibrationReportCodec.encode(updated))
+        return updated.frames.size
     }
 
     /**

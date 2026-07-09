@@ -121,6 +121,32 @@ object BuiltinNodes {
         "tone_map", listOf(ParamSpec("exposure_bias", 0f, -4f, 4f)), S, S, fusable = true
     )
 
+    /**
+     * RAW develop (A5b): desaturate channels toward neutral as they approach
+     * sensor clip — turns magenta-clipped skies white. smoothstep from
+     * `threshold` to 1.0 on the max channel, scaled by `strength`.
+     */
+    val HIGHLIGHT_RECONSTRUCTION = NodeDescriptor(
+        "highlight_reconstruction",
+        listOf(
+            ParamSpec("threshold", 0.95f, 0.5f, 0.99f),
+            ParamSpec("strength", 1f, 0f, 1f),
+        ),
+        S, S, fusable = true
+    )
+    /**
+     * RAW develop (A5b): hyperbolic shadow gain, 1 + amount·range/(range+luma) —
+     * multiplicative so true black stays black and hue is preserved.
+     */
+    val SHADOW_LIFT = NodeDescriptor(
+        "shadow_lift",
+        listOf(
+            ParamSpec("amount", 0.5f, 0f, 4f),
+            ParamSpec("range", 0.1f, 0.01f, 1f),
+        ),
+        S, S, fusable = true
+    )
+
     val GAUSSIAN_BLUR = NodeDescriptor(
         "gaussian_blur", listOf(ParamSpec("sigma", 2f, 0.1f, 24f)), S, S,
         spatialRadius = { p -> app.filmengine.engine.node.Gaussian.radius(p.getValue("sigma")) },
@@ -139,6 +165,7 @@ object BuiltinNodes {
 
     val all = listOf(
         EXPOSURE, WHITE_BALANCE, COLOR_MATRIX, TONE_CURVE, TONE_MAP, SATURATION, SRGB_OUTPUT,
+        HIGHLIGHT_RECONSTRUCTION, SHADOW_LIFT,
         GAUSSIAN_BLUR, BLOOM,
     )
 }

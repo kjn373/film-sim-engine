@@ -39,6 +39,7 @@ object EditStack {
 
     /** Node types offered in the editor palette, in suggested stack order. */
     val palette: List<String> = listOf(
+        "highlight_reconstruction", "shadow_lift",
         "exposure", "white_balance", "tone_curve", "tone_map", "saturation",
         "film_sim", "halation", "bloom", "gaussian_blur", "grain",
     )

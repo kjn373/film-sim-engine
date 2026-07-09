@@ -169,4 +169,45 @@ class CpuBackendTest {
         // Structural sanity on the rest of the card: output must be in [0,1].
         for (v in out.data) assertTrue(v in 0f..1f, "out of range: $v")
     }
+
+    @Test
+    fun `highlight reconstruction desaturates clipped pixels and leaves the rest alone`() {
+        val src = ImageBuffer(
+            2, 1,
+            floatArrayOf(
+                1.0f, 0.6f, 0.5f, 1f,   // red channel at clip → pull toward mean
+                0.4f, 0.3f, 0.2f, 1f,   // well below threshold → untouched
+            )
+        )
+        val graph = ProcessGraph(
+            listOf(NodeInstance("h", "highlight_reconstruction", mapOf("threshold" to 0.9f, "strength" to 1f))),
+            emptyList(), "h",
+        )
+        val out = render(graph, src)
+        val mean = (1.0f + 0.6f + 0.5f) / 3f
+        assertPixel(floatArrayOf(mean, mean, mean), out.pixel(0, 0)) // max=1.0 → full blend
+        assertPixel(floatArrayOf(0.4f, 0.3f, 0.2f), out.pixel(1, 0))
+        // max channel came down, unclipped channels came up — reconstruction, not just clamping
+        assertTrue(out.pixel(0, 0)[0] < 1.0f && out.pixel(0, 0)[1] > 0.6f)
+    }
+
+    @Test
+    fun `shadow lift boosts shadows, preserves true black and barely moves highlights`() {
+        val src = ImageBuffer(
+            3, 1,
+            floatArrayOf(
+                0f, 0f, 0f, 1f,
+                0.02f, 0.02f, 0.02f, 1f,
+                0.9f, 0.9f, 0.9f, 1f,
+            )
+        )
+        val graph = ProcessGraph(
+            listOf(NodeInstance("s", "shadow_lift", mapOf("amount" to 1f, "range" to 0.1f))),
+            emptyList(), "s",
+        )
+        val out = render(graph, src)
+        assertPixel(floatArrayOf(0f, 0f, 0f), out.pixel(0, 0))                    // black fixed
+        assertTrue(out.pixel(1, 0)[0] > 0.03f, "shadow not lifted")               // ~1.83x gain
+        assertTrue(out.pixel(2, 0)[0] < 1.0f, "highlight moved too much")         // gain ~1.1
+    }
 }

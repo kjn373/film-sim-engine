@@ -86,6 +86,7 @@ fun CameraScreen(onOpenEditor: () -> Unit = {}, vm: CameraViewModel = hiltViewMo
     val scopeData by vm.scopeData.collectAsState()
     val zebra by vm.zebra.collectAsState()
     val peaking by vm.peaking.collectAsState()
+    val calMode by vm.calMode.collectAsState()
 
     var activeControl by remember { mutableStateOf<ActiveControl?>(null) }
     var stocksVisible by remember { mutableStateOf(true) }
@@ -122,6 +123,7 @@ fun CameraScreen(onOpenEditor: () -> Unit = {}, vm: CameraViewModel = hiltViewMo
                 TopToggle("PEAK", peaking) { vm.setPeaking(!peaking) }
                 if (caps?.rawSupported == true) {
                     TopToggle("RAW", rawEnabled) { vm.setRaw(!rawEnabled) }
+                    TopToggle(calMode.label, calMode != CalMode.OFF) { vm.cycleCalMode() }
                 }
             }
         }
@@ -293,9 +295,11 @@ fun CameraScreen(onOpenEditor: () -> Unit = {}, vm: CameraViewModel = hiltViewMo
                     .clip(CircleShape)
                     .background(Color(0xFF141414))
                     .clickable {
-                        vm.takePhoto { _, message ->
+                        val onDone = { _: Boolean, message: String ->
                             Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                         }
+                        if (calMode != CalMode.OFF) vm.captureCalibration(onDone)
+                        else vm.takePhoto(onDone)
                     },
             )
             RoundButton("🎞️", on = stocksVisible, onClick = { stocksVisible = !stocksVisible })

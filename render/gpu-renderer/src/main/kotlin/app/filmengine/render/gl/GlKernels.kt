@@ -134,6 +134,43 @@ object GlKernels {
         )
     ) { p, s -> glUniform1f(loc(p, "amount"), s.params.getValue("amount")) }
 
+    private val highlightReconstruction = GlKernel(
+        frag(
+            """
+            uniform float threshold;
+            uniform float strength;
+            void main() {
+                vec4 c = texture(src, uv);
+                float m = max(c.r, max(c.g, c.b));
+                float w = smoothstep(threshold, 1.0, m) * strength;
+                float mean = (c.r + c.g + c.b) / 3.0;
+                fragColor = vec4(mix(c.rgb, vec3(mean), w), c.a);
+            }
+            """
+        )
+    ) { p, s ->
+        glUniform1f(loc(p, "threshold"), s.params.getValue("threshold"))
+        glUniform1f(loc(p, "strength"), s.params.getValue("strength"))
+    }
+
+    private val shadowLift = GlKernel(
+        frag(
+            """
+            uniform float amount;
+            uniform float range;
+            void main() {
+                vec4 c = texture(src, uv);
+                float luma = max(dot(c.rgb, vec3(0.2627, 0.6780, 0.0593)), 0.0);
+                float gain = 1.0 + amount * range / (range + luma);
+                fragColor = vec4(c.rgb * gain, c.a);
+            }
+            """
+        )
+    ) { p, s ->
+        glUniform1f(loc(p, "amount"), s.params.getValue("amount"))
+        glUniform1f(loc(p, "range"), s.params.getValue("range"))
+    }
+
     private val filmSim = GlKernel(
         frag(
             """
@@ -376,6 +413,8 @@ object GlKernels {
         "tone_curve" to toneCurve,
         "tone_map" to toneMap,
         "saturation" to saturation,
+        "highlight_reconstruction" to highlightReconstruction,
+        "shadow_lift" to shadowLift,
         "film_sim" to filmSim,
         "srgb_output" to srgbOutput,
         "gaussian_blur" to gaussianBlur,
