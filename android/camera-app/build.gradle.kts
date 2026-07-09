@@ -34,6 +34,7 @@ android {
 dependencies {
     implementation(project(":core:film-engine"))
     implementation(project(":core:image-engine"))
+    implementation(project(":render:cpu-renderer"))
     implementation(project(":android:camera-core"))
     implementation(project(":android:gles-renderer"))
 
@@ -41,7 +42,8 @@ dependencies {
     ksp("com.google.dagger:hilt-android-compiler:2.56.2")
     implementation("androidx.hilt:hilt-navigation-compose:1.2.0")
 
-    implementation("androidx.camera:camera-view:1.4.1")
+    implementation("androidx.camera:camera-view:1.5.3")
+    implementation("androidx.work:work-runtime-ktx:2.10.1")
 
     implementation(platform("androidx.compose:compose-bom:2024.12.01"))
     implementation("androidx.compose.ui:ui")

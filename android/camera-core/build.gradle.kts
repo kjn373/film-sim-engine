@@ -21,7 +21,8 @@ android {
 }
 
 dependencies {
-    val camerax = "1.4.1"
+    // 1.5+ is required for ImageCapture RAW/DNG output formats (B5)
+    val camerax = "1.5.3"
     api("androidx.camera:camera-core:$camerax")
     api("androidx.camera:camera-camera2:$camerax")
     api("androidx.camera:camera-lifecycle:$camerax")
@@ -32,4 +33,6 @@ dependencies {
     // AGP unit tests run on JUnit4
     testImplementation(kotlin("test"))
     testImplementation("junit:junit:4.13.2")
+    // CaptureRender full-chain check against the reference backend
+    testImplementation(project(":render:cpu-renderer"))
 }

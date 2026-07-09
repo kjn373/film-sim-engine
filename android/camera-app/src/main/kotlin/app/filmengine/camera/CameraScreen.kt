@@ -58,6 +58,7 @@ fun CameraScreen(vm: CameraViewModel = hiltViewModel()) {
     val ui by vm.ui.collectAsState()
     val caps by vm.caps.collectAsState()
     val selectedStock by vm.selectedStock.collectAsState()
+    val rawEnabled by vm.rawEnabled.collectAsState()
     val frameTime by vm.frameTimeMs.collectAsState()
     val quality by vm.qualityLevel.collectAsState()
 
@@ -142,6 +143,14 @@ fun CameraScreen(vm: CameraViewModel = hiltViewModel()) {
                         selected = ui.mode == mode,
                         onClick = { vm.setMode(mode) },
                         label = { Text(label) },
+                        modifier = Modifier.padding(end = 6.dp),
+                    )
+                }
+                if (caps?.rawSupported == true) {
+                    FilterChip(
+                        selected = rawEnabled,
+                        onClick = { vm.setRaw(!rawEnabled) },
+                        label = { Text("RAW") },
                         modifier = Modifier.padding(end = 6.dp),
                     )
                 }

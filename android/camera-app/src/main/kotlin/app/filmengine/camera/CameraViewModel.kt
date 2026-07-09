@@ -1,5 +1,6 @@
 package app.filmengine.camera
 
+import android.content.Context
 import android.view.Surface
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ViewModel
@@ -12,6 +13,7 @@ import app.filmengine.camera.core.ExposureSolver
 import app.filmengine.camera.core.PreviewPipeline
 import app.filmengine.camera.core.QualityLevel
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -27,6 +29,7 @@ data class ExposureUi(
 
 @HiltViewModel
 class CameraViewModel @Inject constructor(
+    @ApplicationContext private val appContext: Context,
     val controller: CameraController,
     val pipeline: PreviewPipeline,
 ) : ViewModel() {
@@ -39,6 +42,9 @@ class CameraViewModel @Inject constructor(
 
     private val _selectedStock = MutableStateFlow<String?>("chroma-100")
     val selectedStock: StateFlow<String?> = _selectedStock
+
+    private val _rawEnabled = MutableStateFlow(false)
+    val rawEnabled: StateFlow<Boolean> = _rawEnabled
 
     /** Frame time from the pipeline (ms). */
     val frameTimeMs: StateFlow<Float> = pipeline.frameTimeMs
@@ -110,7 +116,25 @@ class CameraViewModel @Inject constructor(
         recompute()
     }
 
-    fun takePhoto(onResult: (Boolean, String) -> Unit) = controller.takePhoto(onResult)
+    fun setRaw(enabled: Boolean) {
+        val effective = enabled && _caps.value?.rawSupported == true
+        controller.setRawEnabled(effective)
+        _rawEnabled.value = effective
+    }
+
+    /**
+     * Capture → MediaStore immediately; then, if a stock is selected, hand the
+     * saved JPEG to the full-quality render job ("None" needs no processing).
+     */
+    fun takePhoto(onResult: (Boolean, String) -> Unit) {
+        val stockId = _selectedStock.value
+        controller.takePhoto { success, message, jpegUri ->
+            if (success && jpegUri != null && stockId != null) {
+                RenderWorker.enqueue(appContext, jpegUri, stockId)
+            }
+            onResult(success, message)
+        }
+    }
 
     private fun recompute() {
         val mode = _ui.value.mode
