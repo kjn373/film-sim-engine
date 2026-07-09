@@ -6,7 +6,9 @@ import android.view.SurfaceView
 import android.widget.Toast
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,17 +19,19 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Slider
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -35,8 +39,10 @@ import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -52,9 +58,13 @@ import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
 
-/**
- * Stock chip descriptor: `null` id means "None" (passthrough, no film sim).
- */
+private val Accent = Color(0xFFFFC107)
+private val PillBg = Color(0x2EFFFFFF)
+private val DimText = Color(0x99FFFFFF)
+
+/** Which readout segment's slider is expanded. */
+private enum class ActiveControl { SHUTTER, ISO, EV }
+
 private data class StockChip(val id: String?, val name: String)
 
 private val stockChips: List<StockChip> = buildList {
@@ -77,201 +87,281 @@ fun CameraScreen(onOpenEditor: () -> Unit = {}, vm: CameraViewModel = hiltViewMo
     val zebra by vm.zebra.collectAsState()
     val peaking by vm.peaking.collectAsState()
 
-    // Bind camera once; pipeline lifecycle managed via SurfaceHolder callbacks.
+    var activeControl by remember { mutableStateOf<ActiveControl?>(null) }
+    var stocksVisible by remember { mutableStateOf(true) }
+
     DisposableEffect(lifecycleOwner) {
         vm.bind(lifecycleOwner)
         onDispose { vm.stopPipeline() }
     }
 
-    Box(Modifier.fillMaxSize()) {
-        // ── Processed preview surface ───────────────────────────────────
-        AndroidView(
-            modifier = Modifier.fillMaxSize(),
-            factory = { ctx ->
-                SurfaceView(ctx).also { sv ->
-                    sv.holder.addCallback(object : SurfaceHolder.Callback {
-                        override fun surfaceCreated(holder: SurfaceHolder) {
-                            val s = holder.surface
-                            val r = holder.surfaceFrame
-                            vm.startPipeline(s, r.width(), r.height())
-                        }
-                        override fun surfaceChanged(holder: SurfaceHolder, fmt: Int, w: Int, h: Int) {
-                            vm.onSurfaceChanged(w, h)
-                        }
-                        override fun surfaceDestroyed(holder: SurfaceHolder) {
-                            vm.stopPipeline()
-                        }
-                    })
-                }
-            },
-        )
-
-        // ── Debug HUD (top-left) ────────────────────────────────────────
-        Column(
-            Modifier
-                .align(Alignment.TopStart)
-                .padding(12.dp)
-                .background(Color.Black.copy(alpha = 0.5f))
-                .padding(horizontal = 8.dp, vertical = 4.dp),
+    Column(Modifier.fillMaxSize().background(Color.Black)) {
+        // ── top bar ─────────────────────────────────────────────────────
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                "%.1f ms".format(frameTime),
-                color = if (frameTime > 16.6f) Color(0xFFFF6B6B) else Color(0xFF69DB7C),
+                "%.0fms".format(frameTime),
+                color = if (frameTime > 16.6f) Color(0xFFFF6B6B) else DimText,
                 fontSize = 12.sp,
             )
             if (quality != QualityLevel.FULL) {
-                Text(
-                    quality.name,
-                    color = Color(0xFFFFD43B),
-                    fontSize = 10.sp,
-                )
+                Text("  ${quality.name}", color = Color(0xFFFFD43B), fontSize = 10.sp)
             }
-            Text(
-                "Editor ▸",
-                color = Color.White,
-                fontSize = 12.sp,
-                modifier = Modifier.clickable(onClick = onOpenEditor).padding(top = 4.dp),
-            )
-        }
-
-        // ── Scope overlay (top-right) ───────────────────────────────────
-        scopeData?.let { data ->
-            if (scopeMode != ScopeMode.OFF) {
-                ScopeOverlay(
-                    data = data,
-                    mode = scopeMode,
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(12.dp),
-                )
-            }
-        }
-
-        // ── Controls overlay (bottom) ───────────────────────────────────
-        Column(
-            Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .background(Color.Black.copy(alpha = 0.45f))
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-        ) {
-            // Readout: ISO · shutter · EC/clip warning
-            val readout = buildString {
-                append("ISO ${ui.iso}  ·  ${formatShutter(ui.shutterNs)}")
-                if (ui.ecStops != 0f) append("  ·  EC %+.1f".format(ui.ecStops))
-                if (kotlin.math.abs(ui.offsetStops) > 0.2f) {
-                    append("  ·  %+.1f stops off".format(ui.offsetStops))
-                }
-            }
-            Text(readout, color = Color.White, style = MaterialTheme.typography.labelLarge)
-
-            // Mode selector
-            Row {
-                for ((mode, label) in listOf(
-                    ExposureMode.AUTO to "A",
-                    ExposureMode.SHUTTER_PRIORITY to "S",
-                    ExposureMode.ISO_PRIORITY to "ISO",
-                    ExposureMode.MANUAL to "M",
-                )) {
-                    FilterChip(
-                        selected = ui.mode == mode,
-                        onClick = { vm.setMode(mode) },
-                        label = { Text(label) },
-                        modifier = Modifier.padding(end = 6.dp),
-                    )
-                }
-                if (caps?.rawSupported == true) {
-                    FilterChip(
-                        selected = rawEnabled,
-                        onClick = { vm.setRaw(!rawEnabled) },
-                        label = { Text("RAW") },
-                        modifier = Modifier.padding(end = 6.dp),
-                    )
-                }
-                FilterChip(
-                    selected = scopeMode != ScopeMode.OFF,
-                    onClick = { vm.cycleScopeMode() },
-                    label = {
-                        Text(
-                            when (scopeMode) {
-                                ScopeMode.OFF -> "Scope"
-                                ScopeMode.HISTOGRAM -> "Hist"
-                                ScopeMode.WAVEFORM -> "Wave"
-                            }
-                        )
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TopToggle(
+                    when (scopeMode) {
+                        ScopeMode.OFF -> "SCOPE"
+                        ScopeMode.HISTOGRAM -> "HIST"
+                        ScopeMode.WAVEFORM -> "WAVE"
                     },
-                    modifier = Modifier.padding(end = 6.dp),
-                )
-                FilterChip(
-                    selected = zebra,
-                    onClick = { vm.setZebra(!zebra) },
-                    label = { Text("Zebra") },
-                    modifier = Modifier.padding(end = 6.dp),
-                )
-                FilterChip(
-                    selected = peaking,
-                    onClick = { vm.setPeaking(!peaking) },
-                    label = { Text("Peak") },
-                    modifier = Modifier.padding(end = 6.dp),
-                )
+                    on = scopeMode != ScopeMode.OFF,
+                ) { vm.cycleScopeMode() }
+                TopToggle("ZEBRA", zebra) { vm.setZebra(!zebra) }
+                TopToggle("PEAK", peaking) { vm.setPeaking(!peaking) }
+                if (caps?.rawSupported == true) {
+                    TopToggle("RAW", rawEnabled) { vm.setRaw(!rawEnabled) }
+                }
             }
+        }
 
-            // Manual sliders (log-scaled)
-            caps?.exposure?.let { e ->
-                if (ui.mode == ExposureMode.MANUAL || ui.mode == ExposureMode.ISO_PRIORITY) {
-                    LogSlider(
-                        label = "ISO",
-                        value = ui.iso.toFloat(),
-                        min = e.isoMin.toFloat(),
-                        max = e.isoMax.toFloat(),
-                    ) { vm.setUserIso(it.roundToInt()) }
-                }
-                if (ui.mode == ExposureMode.MANUAL || ui.mode == ExposureMode.SHUTTER_PRIORITY) {
-                    LogSlider(
-                        label = "Shutter",
-                        value = ui.shutterNs.toFloat(),
-                        min = e.minShutterNs.toFloat(),
-                        max = minOf(e.maxShutterNs, 250_000_000L).toFloat(), // cap UI at 1/4 s
-                    ) { vm.setUserShutter(it.roundToLong()) }
-                }
-                if (ui.mode != ExposureMode.MANUAL) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("EC", color = Color.White, modifier = Modifier.padding(end = 8.dp))
-                        Slider(
-                            value = ui.ecStops,
-                            onValueChange = { vm.setEc((it * 3f).roundToInt() / 3f) },
-                            valueRange = -3f..3f,
-                        )
+        // ── viewfinder ──────────────────────────────────────────────────
+        Box(Modifier.fillMaxWidth().weight(1f)) {
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = { ctx ->
+                    SurfaceView(ctx).also { sv ->
+                        sv.holder.addCallback(object : SurfaceHolder.Callback {
+                            override fun surfaceCreated(holder: SurfaceHolder) {
+                                val r = holder.surfaceFrame
+                                vm.startPipeline(holder.surface, r.width(), r.height())
+                            }
+                            override fun surfaceChanged(holder: SurfaceHolder, fmt: Int, w: Int, h: Int) {
+                                vm.onSurfaceChanged(w, h)
+                            }
+                            override fun surfaceDestroyed(holder: SurfaceHolder) {
+                                vm.stopPipeline()
+                            }
+                        })
                     }
+                },
+            )
+            GridOverlay()
+            scopeData?.let { data ->
+                if (scopeMode != ScopeMode.OFF) {
+                    ScopeOverlay(data, scopeMode, Modifier.align(Alignment.TopEnd).padding(12.dp))
                 }
             }
+        }
 
-            // ── Stock selector (with "None" passthrough option) ─────────
-            LazyRow(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        // ── readout pill ────────────────────────────────────────────────
+        Row(
+            Modifier
+                .align(Alignment.CenterHorizontally)
+                .padding(top = 14.dp)
+                .clip(RoundedCornerShape(50))
+                .background(PillBg)
+                .padding(horizontal = 10.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ReadoutSegment(
+                label = "S",
+                value = formatShutter(ui.shutterNs),
+                auto = ui.mode == ExposureMode.AUTO || ui.mode == ExposureMode.ISO_PRIORITY,
+                onClick = { activeControl = ActiveControl.SHUTTER.takeIf { activeControl != it } },
+            )
+            ReadoutSegment(
+                label = "ISO",
+                value = if (ui.iso > 0) "${ui.iso}" else "—",
+                auto = ui.mode == ExposureMode.AUTO || ui.mode == ExposureMode.SHUTTER_PRIORITY,
+                onClick = { activeControl = ActiveControl.ISO.takeIf { activeControl != it } },
+            )
+            ReadoutSegment(
+                label = "EV",
+                value = "%.1f".format(ui.ecStops),
+                auto = false,
+                onClick = { activeControl = ActiveControl.EV.takeIf { activeControl != it } },
+            )
+            if (kotlin.math.abs(ui.offsetStops) > 0.2f) {
+                Text(
+                    "%+.1f".format(ui.offsetStops),
+                    color = Color(0xFFFF6B6B),
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(horizontal = 6.dp),
+                )
+            }
+        }
+
+        // ── expanded control slider ─────────────────────────────────────
+        caps?.exposure?.let { e ->
+            Box(Modifier.padding(horizontal = 24.dp)) {
+                when (activeControl) {
+                    ActiveControl.SHUTTER ->
+                        if (ui.mode == ExposureMode.MANUAL || ui.mode == ExposureMode.SHUTTER_PRIORITY) {
+                            LogSlider(
+                                value = ui.shutterNs.toFloat(),
+                                min = e.minShutterNs.toFloat(),
+                                max = minOf(e.maxShutterNs, 250_000_000L).toFloat(),
+                            ) { vm.setUserShutter(it.roundToLong()) }
+                        }
+                    ActiveControl.ISO ->
+                        if (ui.mode == ExposureMode.MANUAL || ui.mode == ExposureMode.ISO_PRIORITY) {
+                            LogSlider(
+                                value = ui.iso.toFloat(),
+                                min = e.isoMin.toFloat(),
+                                max = e.isoMax.toFloat(),
+                            ) { vm.setUserIso(it.roundToInt()) }
+                        }
+                    ActiveControl.EV ->
+                        if (ui.mode != ExposureMode.MANUAL) {
+                            Slider(
+                                value = ui.ecStops,
+                                onValueChange = { vm.setEc((it * 3f).roundToInt() / 3f) },
+                                valueRange = -3f..3f,
+                            )
+                        }
+                    null -> Unit
+                }
+            }
+        }
+
+        // ── stock strip ─────────────────────────────────────────────────
+        if (stocksVisible) {
+            LazyRow(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
                 items(stockChips, key = { it.id ?: "_none" }) { chip ->
-                    FilterChip(
-                        selected = chip.id == selectedStock,
-                        onClick = { vm.setStock(chip.id) },
-                        label = { Text(chip.name) },
-                        modifier = Modifier.padding(end = 4.dp),
+                    val sel = chip.id == selectedStock
+                    Text(
+                        chip.name,
+                        color = if (sel) Color.Black else Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier
+                            .padding(end = 6.dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(if (sel) Accent else PillBg)
+                            .clickable { vm.setStock(chip.id) }
+                            .padding(horizontal = 12.dp, vertical = 7.dp),
                     )
                 }
             }
+        }
 
-            Surface(
-                shape = CircleShape,
-                color = Color.White,
-                modifier = Modifier
-                    .align(Alignment.CenterHorizontally)
-                    .padding(vertical = 8.dp)
-                    .size(60.dp)
+        // ── mode pill ───────────────────────────────────────────────────
+        Row(
+            Modifier
+                .align(Alignment.CenterHorizontally)
+                .padding(vertical = 6.dp)
+                .clip(RoundedCornerShape(50))
+                .background(PillBg)
+                .padding(4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            for ((mode, label) in listOf(
+                ExposureMode.AUTO to "A",
+                ExposureMode.SHUTTER_PRIORITY to "S",
+                ExposureMode.ISO_PRIORITY to "ISO",
+                ExposureMode.MANUAL to "M",
+            )) {
+                val sel = ui.mode == mode
+                Text(
+                    label,
+                    color = if (sel) Color.Black else Color.White,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(if (sel) Accent else Color.Transparent)
+                        .clickable { vm.setMode(mode) }
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                )
+            }
+        }
+
+        // ── bottom row: editor · shutter · stocks toggle ───────────────
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 14.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            RoundButton("🧪", onClick = onOpenEditor)
+            Box(
+                Modifier
+                    .size(76.dp)
+                    .border(4.dp, Color.White, CircleShape)
+                    .padding(8.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFF141414))
                     .clickable {
                         vm.takePhoto { _, message ->
                             Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                         }
                     },
-            ) {}
+            )
+            RoundButton("🎞️", on = stocksVisible, onClick = { stocksVisible = !stocksVisible })
         }
+    }
+}
+
+// ── pieces ──────────────────────────────────────────────────────────────────
+
+@Composable
+private fun TopToggle(label: String, on: Boolean, onClick: () -> Unit) {
+    Text(
+        label,
+        color = if (on) Accent else DimText,
+        fontSize = 13.sp,
+        fontWeight = FontWeight.SemiBold,
+        modifier = Modifier.clickable(onClick = onClick).padding(horizontal = 8.dp),
+    )
+}
+
+@Composable
+private fun ReadoutSegment(label: String, value: String, auto: Boolean, onClick: () -> Unit) {
+    Row(
+        Modifier.clickable(onClick = onClick).padding(horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("$label ", color = DimText, fontSize = 14.sp)
+        Text(value, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+        if (auto) {
+            Box(
+                Modifier.padding(start = 4.dp).size(15.dp).clip(CircleShape).background(Color(0x66000000)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("A", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+@Composable
+private fun RoundButton(glyph: String, on: Boolean = false, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .size(54.dp)
+            .clip(CircleShape)
+            .background(if (on) Color(0x4DFFFFFF) else PillBg)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(glyph, fontSize = 20.sp)
+    }
+}
+
+/** Rule-of-thirds grid + center reticle over the viewfinder. */
+@Composable
+private fun GridOverlay() {
+    Canvas(Modifier.fillMaxSize()) {
+        val line = Color.White.copy(alpha = 0.25f)
+        for (f in floatArrayOf(1f / 3f, 2f / 3f)) {
+            drawLine(line, Offset(size.width * f, 0f), Offset(size.width * f, size.height), 1.dp.toPx())
+            drawLine(line, Offset(0f, size.height * f), Offset(size.width, size.height * f), 1.dp.toPx())
+        }
+        drawCircle(Color.White.copy(alpha = 0.6f), radius = 40.dp.toPx(), style = Stroke(1.5f.dp.toPx()))
+        val l = 11.dp.toPx()
+        drawLine(Color.White, center - Offset(l, 0f), center + Offset(l, 0f), 2.dp.toPx())
+        drawLine(Color.White, center - Offset(0f, l), center + Offset(0f, l), 2.dp.toPx())
     }
 }
 
@@ -290,9 +380,7 @@ private fun ScopeOverlay(data: ScopeData, mode: ScopeMode, modifier: Modifier = 
     ) {
         when (mode) {
             ScopeMode.HISTOGRAM -> {
-                val max = maxOf(
-                    data.red.max(), data.green.max(), data.blue.max(), 1,
-                )
+                val max = maxOf(data.red.max(), data.green.max(), data.blue.max(), 1)
                 drawHistogram(data.red, Color(0xFFFF5252), max)
                 drawHistogram(data.green, Color(0xFF69F0AE), max)
                 drawHistogram(data.blue, Color(0xFF448AFF), max)
@@ -336,7 +424,6 @@ private fun waveformBitmap(data: ScopeData): ImageBitmap {
         val v = data.waveform[i]
         if (v == 0) continue
         val intensity = (ln(1f + v) / logMax * 255f).roundToInt().coerceIn(0, 255)
-        // row 0 = black level → draw at the bottom
         val y = h - 1 - i / w
         px[y * w + i % w] = (intensity shl 24) or 0x69F0AE
     }
@@ -345,22 +432,13 @@ private fun waveformBitmap(data: ScopeData): ImageBitmap {
 
 /** Slider that maps position 0..1 exponentially onto [min, max]. */
 @Composable
-private fun LogSlider(
-    label: String,
-    value: Float,
-    min: Float,
-    max: Float,
-    onChange: (Float) -> Unit,
-) {
+private fun LogSlider(value: Float, min: Float, max: Float, onChange: (Float) -> Unit) {
     val fraction = if (value <= min) 0f
     else (ln(value / min) / ln(max / min)).coerceIn(0f, 1f)
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(label, color = Color.White, modifier = Modifier.padding(end = 8.dp))
-        Slider(
-            value = fraction,
-            onValueChange = { f -> onChange(min * (max / min).pow(f)) },
-        )
-    }
+    Slider(
+        value = fraction,
+        onValueChange = { f -> onChange(min * (max / min).pow(f)) },
+    )
 }
 
 private fun formatShutter(ns: Long): String = when {
