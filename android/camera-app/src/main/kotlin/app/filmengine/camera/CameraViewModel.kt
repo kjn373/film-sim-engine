@@ -73,6 +73,15 @@ class CameraViewModel @Inject constructor(
     private val _canSwitchCamera = MutableStateFlow(false)
     val canSwitchCamera: StateFlow<Boolean> = _canSwitchCamera
 
+    /** Current zoom ratio — on multi-lens phones, crossing OEM thresholds swaps the physical lens. */
+    private val _zoomRatio = MutableStateFlow(1f)
+    val zoomRatio: StateFlow<Float> = _zoomRatio
+
+    fun setZoom(ratio: Float) {
+        _zoomRatio.value = ratio
+        controller.setZoomRatio(ratio)
+    }
+
     // ── shutter feedback ─────────────────────────────────────────────────────
     /** A capture is in flight — disables the shutter and shows a spinner. */
     private val _capturing = MutableStateFlow(false)
@@ -119,12 +128,13 @@ class CameraViewModel @Inject constructor(
         }
     }
 
-    /** Cycle to the next physical camera (front / back / extra lenses). */
+    /** Cycle to the next physical camera (front / back). */
     fun switchCamera() {
         _caps.value = controller.switchCamera()
         _cameraLabel.value = controller.currentCameraLabel
-        // RAW support is per-camera; reflect what the new one reports.
+        // RAW support and zoom range are per-camera; reset to the new one's defaults.
         _rawEnabled.value = _rawEnabled.value && _caps.value?.rawSupported == true
+        _zoomRatio.value = 1f
     }
 
     fun cycleAspect() {
@@ -267,9 +277,11 @@ class CameraViewModel @Inject constructor(
     }
 
     /**
-     * Capture → MediaStore immediately; then, if a filter is selected or a
-     * non-native crop is chosen, post-process the saved JPEG in place so the
-     * gallery photo matches the live preview (filter applied, correct crop).
+     * Capture to a private file, apply the selected film graph and/or crop,
+     * then insert the final bytes into MediaStore — one write, so the gallery
+     * photo always matches what the viewfinder showed. `_capturing` (and the
+     * shutter spinner) stays true across the whole render, not just the sensor
+     * capture, so the UI never claims "done" before the filtered photo exists.
      */
     fun takePhoto(onResult: (Boolean, String) -> Unit) {
         if (_capturing.value) return // ignore double-taps while a shot is in flight
@@ -277,12 +289,22 @@ class CameraViewModel @Inject constructor(
         val cropSquare = _aspect.value.cropSquare
         _capturing.value = true
         _flashTick.value += 1 // immediate visual cue, before the sensor returns
-        controller.takePhoto { success, message, jpegUri ->
-            if (success && jpegUri != null && (stockId != null || cropSquare)) {
-                RenderWorker.enqueue(appContext, jpegUri, stockId, cropSquare)
+        controller.takePhoto { success, message, jpegFile ->
+            if (!success || jpegFile == null) {
+                _capturing.value = false
+                onResult(success, message)
+                return@takePhoto
             }
-            _capturing.value = false
-            onResult(success, message)
+            viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+                val result = runCatching { CapturePostProcess.process(appContext, jpegFile, stockId, cropSquare) }
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    _capturing.value = false
+                    result.fold(
+                        { onResult(true, message) },
+                        { e -> onResult(false, "Save failed: ${e.message}") },
+                    )
+                }
+            }
         }
     }
 

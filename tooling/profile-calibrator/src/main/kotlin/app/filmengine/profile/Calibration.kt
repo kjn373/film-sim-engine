@@ -1,8 +1,6 @@
 package app.filmengine.profile
 
-import app.filmengine.color.ColorSpaces
 import app.filmengine.color.Mat3
-import app.filmengine.color.Srgb
 import kotlin.math.cbrt
 import kotlin.math.sqrt
 
@@ -116,27 +114,71 @@ object NoiseFitter {
 }
 
 /**
- * Reference XYZ (D65, Y of white ≈ 0.91) for the classic 24-patch ColorChecker,
- * row-major top-left → bottom-right.
+ * Reference XYZ (D65) for the classic 24-patch ColorChecker, row-major
+ * top-left → bottom-right — the actual measured chart data, not a rendition.
+ *
+ * Source: the official GretagMacbeth "ColorChecker 2005" L*a*b* (D50)
+ * reference values (Danny Pascale / BabelColor, "RGB coordinates of the
+ * Macbeth ColorChecker", Table 2, rev. 2006-06-01 — the same data used by
+ * dcraw/ArgyllCMS/DNG-style camera calibration). Converted to XYZ D65 via the
+ * standard Lab→XYZ transform plus the paper's own Bradford D50→D65 matrix
+ * (Table 7), matching this engine's D65 working space.
  */
-// ponytail: derived from the widely published nominal sRGB rendition of the
-// chart — good to a few ΔE. Feed measured Lab data for production-grade profiles.
 object ColorCheckerReference {
 
-    private val srgb8 = listOf(
-        intArrayOf(115, 82, 68), intArrayOf(194, 150, 130), intArrayOf(98, 122, 157),
-        intArrayOf(87, 108, 67), intArrayOf(133, 128, 177), intArrayOf(103, 189, 170),
-        intArrayOf(214, 126, 44), intArrayOf(80, 91, 166), intArrayOf(193, 90, 99),
-        intArrayOf(94, 60, 108), intArrayOf(157, 188, 64), intArrayOf(224, 163, 46),
-        intArrayOf(56, 61, 150), intArrayOf(70, 148, 73), intArrayOf(175, 54, 60),
-        intArrayOf(231, 199, 31), intArrayOf(187, 86, 149), intArrayOf(8, 133, 161),
-        intArrayOf(243, 243, 242), intArrayOf(200, 200, 200), intArrayOf(160, 160, 160),
-        intArrayOf(122, 122, 121), intArrayOf(85, 85, 85), intArrayOf(52, 52, 52),
+    // L*, a*, b* per patch, GretagMacbeth 2005 official values.
+    private val LAB_D50 = listOf(
+        floatArrayOf(37.99f, 13.56f, 14.06f),   // dark skin
+        floatArrayOf(65.71f, 18.13f, 17.81f),   // light skin
+        floatArrayOf(49.93f, -4.88f, -21.93f),  // blue sky
+        floatArrayOf(43.14f, -13.10f, 21.91f),  // foliage
+        floatArrayOf(55.11f, 8.84f, -25.40f),   // blue flower
+        floatArrayOf(70.72f, -33.40f, -0.20f),  // bluish green
+        floatArrayOf(62.66f, 36.07f, 57.10f),   // orange
+        floatArrayOf(40.02f, 10.41f, -45.96f),  // purplish blue
+        floatArrayOf(51.12f, 48.24f, 16.25f),   // moderate red
+        floatArrayOf(30.33f, 22.98f, -21.59f),  // purple
+        floatArrayOf(72.53f, -23.71f, 57.26f),  // yellow green
+        floatArrayOf(71.94f, 19.36f, 67.86f),   // orange yellow
+        floatArrayOf(28.78f, 14.18f, -50.30f),  // blue
+        floatArrayOf(55.26f, -38.34f, 31.37f),  // green
+        floatArrayOf(42.10f, 53.38f, 28.19f),   // red
+        floatArrayOf(81.73f, 4.04f, 79.82f),    // yellow
+        floatArrayOf(51.94f, 49.99f, -14.57f),  // magenta
+        floatArrayOf(51.04f, -28.63f, -28.64f), // cyan
+        floatArrayOf(96.54f, -0.425f, 1.186f),  // white 9.5 (.05 D)
+        floatArrayOf(81.26f, -0.638f, -0.335f), // neutral 8 (.23 D)
+        floatArrayOf(66.77f, -0.734f, -0.504f), // neutral 6.5 (.44 D)
+        floatArrayOf(50.87f, -0.153f, -0.270f), // neutral 5 (.70 D)
+        floatArrayOf(35.66f, -0.421f, -1.231f), // neutral 3.5 (1.05 D)
+        floatArrayOf(20.46f, -0.079f, -0.973f), // black 2 (1.5 D)
     )
 
-    val XYZ_D65: List<FloatArray> = srgb8.map { rgb ->
-        val lin = FloatArray(3) { Srgb.eotf(rgb[it] / 255f) }
-        ColorSpaces.SRGB_TO_XYZ.transform(lin[0], lin[1], lin[2])
+    // CIE D50 reference white (2° observer), Y normalized to 1.
+    private const val D50_XN = 0.9642f
+    private const val D50_YN = 1.0f
+    private const val D50_ZN = 0.8249f
+
+    private fun labToXyzD50(lab: FloatArray): FloatArray {
+        val fy = (lab[0] + 16f) / 116f
+        val fx = fy + lab[1] / 500f
+        val fz = fy - lab[2] / 200f
+        fun finv(t: Float) = if (t > 6f / 29f) t * t * t else 3f * (6f / 29f) * (6f / 29f) * (t - 4f / 29f)
+        return floatArrayOf(D50_XN * finv(fx), D50_YN * finv(fy), D50_ZN * finv(fz))
+    }
+
+    // Bradford D50->D65 chromatic adaptation matrix (Pascale/BabelColor Table 7).
+    private val BRADFORD_D50_TO_D65 = Mat3(
+        floatArrayOf(
+            0.9555766f, -0.0230393f, 0.0631636f,
+            -0.0282895f, 1.0099416f, 0.0210077f,
+            0.0122982f, -0.0204830f, 1.3299098f,
+        )
+    )
+
+    val XYZ_D65: List<FloatArray> = LAB_D50.map { lab ->
+        val xyzD50 = labToXyzD50(lab)
+        BRADFORD_D50_TO_D65.transform(xyzD50[0], xyzD50[1], xyzD50[2])
     }
 
     const val PATCH_COUNT = 24

@@ -10,6 +10,7 @@ import android.os.Build
 import android.provider.MediaStore
 import androidx.annotation.RequiresApi
 import androidx.heifwriter.HeifWriter
+import java.io.File
 
 /**
  * MediaStore image I/O shared by the capture render job (B5) and the editor
@@ -38,6 +39,24 @@ object MediaImages {
         }
     }.getOrNull()
 
+    /** Same as [load] but from a private cache file — used by the capture pipeline. */
+    fun loadFile(file: File, maxEdge: Int): Bitmap? = runCatching {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            ImageDecoder.decodeBitmap(ImageDecoder.createSource(file)) { decoder, info, _ ->
+                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                decoder.setTargetSampleSize(sampleSize(maxOf(info.size.width, info.size.height), maxEdge))
+            }
+        } else {
+            // ponytail: pre-P fallback ignores EXIF rotation (API 26/27 only)
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(file.path, bounds)
+            val opts = BitmapFactory.Options().apply {
+                inSampleSize = sampleSize(maxOf(bounds.outWidth, bounds.outHeight), maxEdge)
+            }
+            BitmapFactory.decodeFile(file.path, opts)
+        }
+    }.getOrNull()
+
     fun sampleSize(maxDim: Int, maxEdge: Int): Int {
         var n = 1
         while (maxDim / (n * 2) >= maxEdge) n *= 2
@@ -58,11 +77,13 @@ object MediaImages {
         return uri
     }
 
-    /** Rewrite an existing MediaStore JPEG in place (we own the entry). */
-    fun overwriteJpeg(context: Context, uri: Uri, bitmap: Bitmap) {
-        context.contentResolver.openOutputStream(uri, "wt")
-            ?.use { bitmap.compress(Bitmap.CompressFormat.JPEG, 95, it) }
+    /** Copy a JPEG file's bytes straight into a new MediaStore entry — no recompression. */
+    fun insertJpegBytes(context: Context, file: File, name: String): Uri {
+        val uri = insert(context, name, "image/jpeg")
+        context.contentResolver.openOutputStream(uri)
+            ?.use { out -> file.inputStream().use { it.copyTo(out) } }
             ?: error("Cannot open $uri for writing")
+        return uri
     }
 
     /** Centre square crop (for the 1:1 aspect ratio). Returns a new bitmap. */

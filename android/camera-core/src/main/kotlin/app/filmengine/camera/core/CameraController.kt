@@ -9,7 +9,6 @@ import android.hardware.camera2.CameraMetadata
 import android.hardware.camera2.CaptureRequest
 import android.hardware.camera2.CaptureResult
 import android.hardware.camera2.TotalCaptureResult
-import android.net.Uri
 import android.provider.MediaStore
 import androidx.camera.camera2.interop.Camera2CameraControl
 import androidx.camera.camera2.interop.Camera2CameraInfo
@@ -27,6 +26,7 @@ import androidx.lifecycle.LifecycleOwner
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Locale
 import kotlin.coroutines.resume
@@ -37,6 +37,15 @@ data class CameraCaps(
     val minFocusDiopters: Float,
     /** Device supports simultaneous DNG + JPEG capture. */
     val rawSupported: Boolean = false,
+    /**
+     * Zoom ratio range for the bound (logical) camera, e.g. 0.5..10. On a
+     * multi-lens phone the OS switches physical lenses (ultrawide/wide/tele)
+     * automatically as this crosses OEM-defined thresholds — there is no
+     * separate CameraSelector per back lens (ARCHITECTURE note: verified
+     * against CameraCharacteristics.getPhysicalCameraIds()/zoom docs).
+     */
+    val minZoomRatio: Float = 1f,
+    val maxZoomRatio: Float = 1f,
 )
 
 /**
@@ -151,13 +160,25 @@ class CameraController(private val context: Context) {
         return readCaps(cam)
     }
 
-    /** Cycle to the next available camera; returns the new capabilities. */
+    /** Cycle to the next available camera (front/back); returns the new capabilities. */
     fun switchCamera(): CameraCaps {
         val cam = camera ?: error("Camera not bound")
         if (cameras.size <= 1) return readCaps(cam)
         cameraIndex = (cameraIndex + 1) % cameras.size
         lensSelector = cameras[cameraIndex]
         return rebind()
+    }
+
+    /**
+     * Set the zoom ratio on the bound (logical) camera. On multi-lens phones
+     * this is how you switch between ultrawide/wide/tele — the OS routes to
+     * the appropriate physical lens automatically at its own thresholds;
+     * CameraX/Camera2 expose no per-lens CameraSelector for this.
+     */
+    fun setZoomRatio(ratio: Float) {
+        val cam = camera ?: return
+        val state = cam.cameraInfo.zoomState.value ?: return
+        cam.cameraControl.setZoomRatio(ratio.coerceIn(state.minZoomRatio, state.maxZoomRatio))
     }
 
     /** Change the capture aspect ratio; returns the (unchanged) capabilities. */
@@ -209,36 +230,38 @@ class CameraController(private val context: Context) {
     }
 
     /**
-     * Capture to MediaStore immediately — JPEG always, plus a DNG sibling when
-     * RAW is enabled. [onResult] fires once, on the JPEG outcome; its non-null
-     * [Uri] is the hook for the full-quality render job (B5).
+     * Capture the JPEG to a private cache file (never MediaStore directly) —
+     * the caller applies the film graph / crop and does the ONE MediaStore
+     * insert with final bytes. Writing the unfiltered JPEG straight to
+     * MediaStore and overwriting it later was the previous approach; it left
+     * a window where the unfiltered photo was visible (and some gallery apps
+     * cache a thumbnail from that first write and never refresh it). A DNG
+     * sibling, when RAW is enabled, still goes straight to MediaStore as the
+     * unprocessed archival original — that's the point of RAW.
      */
-    fun takePhoto(onResult: (success: Boolean, message: String, jpegUri: Uri?) -> Unit) {
+    fun takePhoto(onResult: (success: Boolean, message: String, jpegFile: File?) -> Unit) {
         val capture = imageCapture ?: return onResult(false, "Camera not bound", null)
         val name = "FE_" + SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
             .format(System.currentTimeMillis())
         val withDng = rawEnabled
+        val jpegFile = File(context.cacheDir, "$name.jpg")
         val callback = object : ImageCapture.OnImageSavedCallback {
             override fun onImageSaved(result: ImageCapture.OutputFileResults) {
-                // RAW+JPEG invokes this once per file; only JPEG drives the pipeline.
+                // RAW+JPEG invokes this once per file; only the JPEG one drives the pipeline.
                 if (result.imageFormat == ImageFormat.RAW_SENSOR) return
                 val suffix = if (withDng) " (+DNG)" else ""
-                onResult(true, "Saved $name$suffix", result.savedUri)
+                onResult(true, "Captured$suffix", jpegFile)
             }
 
             override fun onError(e: ImageCaptureException) =
                 onResult(false, "Capture failed: ${e.message}", null)
         }
         val executor = ContextCompat.getMainExecutor(context)
+        val jpegOutput = ImageCapture.OutputFileOptions.Builder(jpegFile).build()
         if (withDng) {
-            capture.takePicture(
-                mediaStoreOutput(name, "image/x-adobe-dng"),
-                mediaStoreOutput(name, "image/jpeg"),
-                executor,
-                callback,
-            )
+            capture.takePicture(mediaStoreOutput(name, "image/x-adobe-dng"), jpegOutput, executor, callback)
         } else {
-            capture.takePicture(mediaStoreOutput(name, "image/jpeg"), executor, callback)
+            capture.takePicture(jpegOutput, executor, callback)
         }
     }
 
@@ -377,6 +400,7 @@ class CameraController(private val context: Context) {
         val isoRange = info.getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE)
         val shutterRange = info.getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE)
         val minFocus = info.getCameraCharacteristic(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE)
+        val zoom = cam.cameraInfo.zoomState.value
         return CameraCaps(
             exposure = ExposureCaps(
                 isoMin = isoRange?.lower ?: 100,
@@ -386,6 +410,8 @@ class CameraController(private val context: Context) {
             ),
             minFocusDiopters = minFocus ?: 0f,
             rawSupported = rawSupported,
+            minZoomRatio = zoom?.minZoomRatio ?: 1f,
+            maxZoomRatio = zoom?.maxZoomRatio ?: 1f,
         )
     }
 

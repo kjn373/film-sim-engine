@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBars
@@ -49,7 +48,6 @@ import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
@@ -103,9 +101,11 @@ fun CameraScreen(onOpenEditor: () -> Unit = {}, vm: CameraViewModel = hiltViewMo
     val canSwitchCamera by vm.canSwitchCamera.collectAsState()
     val capturing by vm.capturing.collectAsState()
     val flashTick by vm.flashTick.collectAsState()
+    val zoomRatio by vm.zoomRatio.collectAsState()
 
     var activeControl by remember { mutableStateOf<ActiveControl?>(null) }
     var stocksVisible by remember { mutableStateOf(true) }
+    var gridVisible by remember { mutableStateOf(true) }
 
     DisposableEffect(lifecycleOwner) {
         vm.bind(lifecycleOwner)
@@ -122,33 +122,37 @@ fun CameraScreen(onOpenEditor: () -> Unit = {}, vm: CameraViewModel = hiltViewMo
     }
 
     Column(Modifier.fillMaxSize().background(Color.Black)) {
-        // ── top bar ─────────────────────────────────────────────────────
-        Row(
+        // ── top bar (two rows — one row of toggles gets crowded fast) ────
+        Column(
             Modifier
                 .fillMaxWidth()
                 .windowInsetsPadding(WindowInsets.statusBars)
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
+                .padding(horizontal = 16.dp, vertical = 6.dp),
         ) {
-            Text(
-                "%.0fms".format(frameTime),
-                color = if (frameTime > 16.6f) Color(0xFFFF6B6B) else DimText,
-                fontSize = 12.sp,
-            )
-            if (quality != QualityLevel.FULL) {
-                Text("  ${quality.name}", color = Color(0xFFFFD43B), fontSize = 10.sp)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "%.0fms".format(frameTime),
+                    color = if (frameTime > 16.6f) Color(0xFFFF6B6B) else DimText,
+                    fontSize = 12.sp,
+                )
+                if (quality != QualityLevel.FULL) {
+                    Text("  ${quality.name}", color = Color(0xFFFFD43B), fontSize = 10.sp)
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TopToggle("GRID", gridVisible) { gridVisible = !gridVisible }
+                    TopToggle(
+                        when (scopeMode) {
+                            ScopeMode.OFF -> "SCOPE"
+                            ScopeMode.HISTOGRAM -> "HIST"
+                            ScopeMode.WAVEFORM -> "WAVE"
+                        },
+                        on = scopeMode != ScopeMode.OFF,
+                    ) { vm.cycleScopeMode() }
+                    TopToggle("ZEBRA", zebra) { vm.setZebra(!zebra) }
+                    TopToggle("PEAK", peaking) { vm.setPeaking(!peaking) }
+                }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                TopToggle(
-                    when (scopeMode) {
-                        ScopeMode.OFF -> "SCOPE"
-                        ScopeMode.HISTOGRAM -> "HIST"
-                        ScopeMode.WAVEFORM -> "WAVE"
-                    },
-                    on = scopeMode != ScopeMode.OFF,
-                ) { vm.cycleScopeMode() }
-                TopToggle("ZEBRA", zebra) { vm.setZebra(!zebra) }
-                TopToggle("PEAK", peaking) { vm.setPeaking(!peaking) }
                 TopToggle(aspect.label, on = true) { vm.cycleAspect() }
                 if (caps?.rawSupported == true) {
                     TopToggle("RAW", rawEnabled) { vm.setRaw(!rawEnabled) }
@@ -179,7 +183,7 @@ fun CameraScreen(onOpenEditor: () -> Unit = {}, vm: CameraViewModel = hiltViewMo
                         }
                     },
                 )
-                GridOverlay()
+                if (gridVisible) GridOverlay()
                 scopeData?.let { data ->
                     if (scopeMode != ScopeMode.OFF) {
                         ScopeOverlay(data, scopeMode, Modifier.align(Alignment.TopEnd).padding(12.dp))
@@ -192,6 +196,38 @@ fun CameraScreen(onOpenEditor: () -> Unit = {}, vm: CameraViewModel = hiltViewMo
                     ) {
                         RoundButton("🔄", onClick = vm::switchCamera)
                         Text(cameraLabel, color = DimText, fontSize = 9.sp)
+                    }
+                }
+                val zoomCaps = caps
+                if (zoomCaps != null && zoomCaps.maxZoomRatio > zoomCaps.minZoomRatio) {
+                    val presets = remember(zoomCaps.minZoomRatio, zoomCaps.maxZoomRatio) {
+                        listOf(0.5f, 1f, 2f, 3f, 5f)
+                            .filter { it in zoomCaps.minZoomRatio..zoomCaps.maxZoomRatio }
+                            .ifEmpty { listOf(1f) }
+                    }
+                    Row(
+                        Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = 12.dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(PillBg)
+                            .padding(4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        for (z in presets) {
+                            val sel = kotlin.math.abs(zoomRatio - z) < 0.05f
+                            Text(
+                                if (z == z.toInt().toFloat()) "${z.toInt()}×" else "${z}×",
+                                color = if (sel) Color.Black else Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier
+                                    .clip(CircleShape)
+                                    .background(if (sel) Accent else Color.Transparent)
+                                    .clickable { vm.setZoom(z) }
+                                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                            )
+                        }
                     }
                 }
             }
@@ -404,7 +440,7 @@ private fun RoundButton(glyph: String, on: Boolean = false, onClick: () -> Unit)
     }
 }
 
-/** Rule-of-thirds grid + center reticle over the viewfinder. */
+/** Rule-of-thirds grid over the viewfinder — toggled by the GRID chip. */
 @Composable
 private fun GridOverlay() {
     Canvas(Modifier.fillMaxSize()) {
@@ -413,10 +449,6 @@ private fun GridOverlay() {
             drawLine(line, Offset(size.width * f, 0f), Offset(size.width * f, size.height), 1.dp.toPx())
             drawLine(line, Offset(0f, size.height * f), Offset(size.width, size.height * f), 1.dp.toPx())
         }
-        drawCircle(Color.White.copy(alpha = 0.6f), radius = 40.dp.toPx(), style = Stroke(1.5f.dp.toPx()))
-        val l = 11.dp.toPx()
-        drawLine(Color.White, center - Offset(l, 0f), center + Offset(l, 0f), 2.dp.toPx())
-        drawLine(Color.White, center - Offset(0f, l), center + Offset(0f, l), 2.dp.toPx())
     }
 }
 

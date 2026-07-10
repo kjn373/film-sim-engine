@@ -69,3 +69,12 @@ enabled.
 No ColorChecker chart or tungsten lamp on hand yet, so steps 2–3 are on
 hold. Steps 1 and 4 (dark frames, flat field) have no such dependency and
 can be shot at any time.
+
+`ColorCheckerReference` (`tooling/profile-calibrator`) now uses the official
+GretagMacbeth "ColorChecker 2005" L*a*b* (D50) measured values (Pascale/
+BabelColor, converted to XYZ D65 via the paper's own Bradford matrix) instead
+of a nominal-sRGB approximation, so the chart-based color-matrix solve will
+be accurate once a real shoot happens. Until then, `CameraController.loadProfile()`
+falls back to `harvestProfile()` — sensor black/white levels, color matrices,
+and illuminant data read straight from Camera2 `CameraCharacteristics` — which
+is the practical B7 delivery for a device with no calibration shoot.
